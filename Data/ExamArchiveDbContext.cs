@@ -117,16 +117,25 @@ public class ExamArchiveDbContext : DbContext
                 .HasMaxLength(20)
                 .HasDefaultValue(PaperStatus.Pending);
 
-            // Filled in by SQLite on insert; stored as UTC.
+            // Filled in by the database on insert; stored as UTC.
             //
-            // The conversion on the way out is what makes that true in practice.
-            // SQLite has no date type, so a DateTime read back from TEXT arrives
-            // with Kind = Unspecified, and System.Text.Json then writes it without
-            // a trailing Z. A browser parsing "2026-08-14T11:42:47" treats it as
-            // local time, so every timestamp was landing hours off. Stamping the
-            // kind on read makes the serialized form say what the column means.
+            // UTC_TIMESTAMP() rather than CURRENT_TIMESTAMP, which is the whole
+            // point of this line. SQLite's CURRENT_TIMESTAMP is UTC, MySQL's is the
+            // session time zone, and nothing announces the difference: on a machine
+            // in Belgrade every default-stamped row would simply be two hours in the
+            // future, and the conversion below would then label it "Z" and make the
+            // wrong answer look authoritative. Parenthesised because MySQL 8.0.13+
+            // requires that form for any default that is an expression rather than
+            // the CURRENT_TIMESTAMP special case.
+            //
+            // The conversion on the way out is what makes the UTC claim true in
+            // practice. A MySQL datetime carries no zone, so a DateTime read back
+            // arrives with Kind = Unspecified, and System.Text.Json then writes it
+            // without a trailing Z. A browser parsing "2026-08-14T11:42:47" treats
+            // it as local time, so every timestamp was landing hours off. Stamping
+            // the kind on read makes the serialized form say what the column means.
             entity.Property(p => p.UploadedAt)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasDefaultValueSql("(UTC_TIMESTAMP())")
                 .HasConversion(
                     value => value,
                     value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
@@ -301,8 +310,9 @@ public class ExamArchiveDbContext : DbContext
             entity.Property(u => u.MustChangePassword)
                 .HasDefaultValue(false);
 
+            // UTC_TIMESTAMP() for the same reason as Paper.UploadedAt.
             entity.Property(u => u.CreatedAt)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasDefaultValueSql("(UTC_TIMESTAMP())")
                 .HasConversion(
                     value => value,
                     value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
