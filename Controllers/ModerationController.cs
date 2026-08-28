@@ -32,16 +32,22 @@ public class ModerationController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
     private readonly PaperFileServer _files;
+    private readonly PaperFileStorage _storage;
     private readonly PaperSubmissionService _submissions;
+    private readonly ILogger<ModerationController> _logger;
 
     public ModerationController(
         ExamArchiveDbContext db,
         PaperFileServer files,
-        PaperSubmissionService submissions)
+        PaperFileStorage storage,
+        PaperSubmissionService submissions,
+        ILogger<ModerationController> logger)
     {
         _db = db;
         _files = files;
+        _storage = storage;
         _submissions = submissions;
+        _logger = logger;
     }
 
     /// <summary>
@@ -215,6 +221,116 @@ public class ModerationController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
 
         return Ok(await LoadForModerationAsync(id, cancellationToken));
+    }
+
+    /// <summary>
+    /// Corrects a paper's filing details: its subject, sitting, month and year.
+    /// </summary>
+    /// <remarks>
+    /// The one gap the archive had until now. A paper filed under the wrong subject
+    /// or year is not wrong enough to reject — the scan is fine and the submitter
+    /// did nothing wrong — but with no way to edit it, the only remedies were to
+    /// leave it misfiled or to reject and re-upload it, and neither is honest.
+    /// <para>
+    /// Moderator rather than Admin. This is a judgement about one paper, which is
+    /// exactly what a moderator is for; the subject catalogue it files against is
+    /// the admin's.
+    /// </para>
+    /// </remarks>
+    [HttpPut("papers/{id:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ModerationPaperDto>> UpdatePaper(
+        int id,
+        [FromBody] UpdatePaperRequest request,
+        CancellationToken cancellationToken)
+    {
+        var paper = await _db.Papers.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+        if (paper is null)
+        {
+            return NotFound();
+        }
+
+        // Checked here for a usable message. The foreign key would refuse it anyway,
+        // but as a 500 that says nothing about which field was wrong.
+        var subjectExists = await _db.Subjects
+            .AnyAsync(subject => subject.Id == request.SubjectId, cancellationToken);
+
+        if (!subjectExists)
+        {
+            ModelState.AddModelError(
+                nameof(request.SubjectId),
+                $"No subject with id {request.SubjectId} exists.");
+
+            return ValidationProblem(ModelState);
+        }
+
+        paper.SubjectId = request.SubjectId;
+        paper.ExamType = request.ExamType;
+        paper.Month = request.Month;
+        paper.Year = request.Year;
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("{Moderator} edited paper {PaperId}.", User.Identity?.Name, id);
+
+        return Ok(await LoadForModerationAsync(id, cancellationToken));
+    }
+
+    /// <summary>
+    /// Removes a paper from the archive entirely, along with its files.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from rejection, which is a decision about whether to publish and
+    /// stays reversible. This is for papers that should not exist at all —
+    /// duplicates, a submission somebody asks to have withdrawn, a scan carrying
+    /// something personal — and it is not reversible, which is why it is the one
+    /// action here restricted to an administrator.
+    /// <para>
+    /// The PaperFiles rows go with it through the cascade configured on the foreign
+    /// key. The bytes on disk do not: cascade deletes rows, and a paper deleted
+    /// without this call would leak its files silently.
+    /// </para>
+    /// </remarks>
+    [HttpDelete("papers/{id:int}")]
+    [Authorize(Roles = nameof(UserRole.Admin))]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeletePaper(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var paper = await _db.Papers
+            .Include(p => p.Files)
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+
+        if (paper is null)
+        {
+            return NotFound();
+        }
+
+        // Captured before the delete, because the rows about to go are the only
+        // record of where the bytes live.
+        var storedPaths = paper.Files.Select(f => f.StoredPath).ToList();
+
+        _db.Papers.Remove(paper);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Files after the commit, deliberately. Deleting them first and then failing
+        // to save would leave rows pointing at nothing, which breaks the archive;
+        // this order can at worst leave bytes with no row, which is only wasted disk.
+        _storage.TryDeleteOrphans(storedPaths, _logger);
+
+        _logger.LogInformation(
+            "{Admin} deleted paper {PaperId} and its {FileCount} file(s).",
+            User.Identity?.Name,
+            id,
+            storedPaths.Count);
+
+        return NoContent();
     }
 
     /// <summary>

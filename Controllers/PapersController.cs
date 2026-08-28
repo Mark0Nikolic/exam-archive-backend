@@ -4,7 +4,6 @@ using ExamArchive.Models;
 using ExamArchive.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Controllers;
@@ -40,25 +39,50 @@ public class PapersController : ControllerBase
     }
 
     /// <summary>
-    /// Lists the approved exam papers archived under a subject, newest exam first.
+    /// Lists approved exam papers, newest exam first.
     /// </summary>
-    /// <param name="subjectId">The subject whose archive to list. Required.</param>
+    /// <param name="subjectId">
+    /// Restricts the list to one subject. Optional: omitted, the whole archive is
+    /// browsed, which is what a landing page showing recent additions needs.
+    /// </param>
+    /// <param name="limit">
+    /// How many papers to return, clamped to a sane range. Present because the
+    /// unfiltered list grows without bound as the archive fills, and an endpoint
+    /// that returns every row eventually returns too many.
+    /// </param>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<IEnumerable<PaperDto>>> GetPapers(
-        [FromQuery, BindRequired] int subjectId,
-        CancellationToken cancellationToken)
+        [FromQuery] int? subjectId,
+        CancellationToken cancellationToken,
+        [FromQuery] int limit = 100)
     {
-        // Filtering on SubjectId then ordering by Year/Month matches the
-        // IX_Papers_SubjectId_Year_Month index exactly.
-        var papers = await _db.Papers
+        var query = _db.Papers
             .AsNoTracking()
-            .Where(p => p.SubjectId == subjectId && p.Status == PaperStatus.Approved)
+            .Where(p => p.Status == PaperStatus.Approved);
+
+        if (subjectId is not null)
+        {
+            // With this applied, filtering on SubjectId then ordering by Year/Month
+            // matches the IX_Papers_SubjectId_Year_Month index exactly.
+            query = query.Where(p => p.SubjectId == subjectId);
+        }
+
+        var papers = await query
             .OrderByDescending(p => p.Year)
             .ThenByDescending(p => p.Month)
+
+            // Id last so the order is total. Without it two papers sat in the same
+            // month come back in whatever order the server felt like, which makes a
+            // list appear to reshuffle between identical requests.
+            .ThenByDescending(p => p.Id)
+            .Take(Math.Clamp(limit, 1, 200))
             .Select(p => new PaperDto(
                 p.Id,
+                p.SubjectId,
+                p.Subject!.NameSr,
+                p.Subject.NameEn,
                 p.ExamType,
                 p.Month,
                 p.Year,
@@ -67,6 +91,43 @@ public class PapersController : ControllerBase
             .ToListAsync(cancellationToken);
 
         return Ok(papers);
+    }
+
+    /// <summary>
+    /// Fetches one approved paper.
+    /// </summary>
+    /// <remarks>
+    /// A detail page needs this: reaching a paper by its own URL is otherwise
+    /// impossible without listing its whole subject and searching the result.
+    /// <para>
+    /// Unapproved papers are 404, not 403, matching the file endpoints below —
+    /// telling the two apart would let anyone probe ids to learn that a pending
+    /// paper exists, which is the thing keeping it off this API prevents.
+    /// </para>
+    /// </remarks>
+    [HttpGet("{id:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PaperDto>> GetPaper(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var paper = await _db.Papers
+            .AsNoTracking()
+            .Where(p => p.Id == id && p.Status == PaperStatus.Approved)
+            .Select(p => new PaperDto(
+                p.Id,
+                p.SubjectId,
+                p.Subject!.NameSr,
+                p.Subject.NameEn,
+                p.ExamType,
+                p.Month,
+                p.Year,
+                p.Files.Count,
+                p.UploadedAt))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return paper is null ? NotFound() : Ok(paper);
     }
 
     /// <summary>
