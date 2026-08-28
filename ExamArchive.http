@@ -10,7 +10,7 @@
 ### Everything under "Moderation" below returns 401 until one of these has run.
 
 ### Sign in as a moderator — unlocks the moderation section
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Sign in as an admin — same powers today, plus the configuration work to come
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -28,7 +28,7 @@ Content-Type: application/json
 }
 
 ### Wrong password — same message as an unknown username, on purpose
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -38,13 +38,13 @@ Content-Type: application/json
 
 ### Who am I? 401 when not signed in — the cookie is HttpOnly, so this is the
 ### only way a frontend can find out.
-GET {{ExamArchive_HostAddress}}/api/auth/me
+GET {{ExamArchive_HostAddress}}/api/me
 Accept: application/json
 
 ### Change your own password. Requires the current one — a session cookie proves
 ### the browser signed in once, not that the person at the keyboard owns the
 ### account. Minimum 12 characters for the new one.
-POST {{ExamArchive_HostAddress}}/api/auth/change-password
+POST {{ExamArchive_HostAddress}}/api/change-password
 Content-Type: application/json
 
 {
@@ -54,7 +54,7 @@ Content-Type: application/json
 
 ### Same password back again — refused, so a change that did nothing is not
 ### mistaken for one that worked
-POST {{ExamArchive_HostAddress}}/api/auth/change-password
+POST {{ExamArchive_HostAddress}}/api/change-password
 Content-Type: application/json
 
 {
@@ -63,7 +63,7 @@ Content-Type: application/json
 }
 
 ### Sign out
-POST {{ExamArchive_HostAddress}}/api/auth/logout
+POST {{ExamArchive_HostAddress}}/api/logout
 
 ### ==================== Browsing (anonymous) ====================
 
