@@ -315,7 +315,7 @@ public class ExamArchiveDbContext : DbContext
                 // which is a confusing way to find a spelling mistake.
                 t.HasCheckConstraint(
                     "CK_User_Role",
-                    "`Role` IN ('Moderator', 'Admin')");
+                    "`Role` IN ('User', 'Moderator', 'Admin')");
             });
         });
     }

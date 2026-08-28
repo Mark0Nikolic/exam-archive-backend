@@ -4,9 +4,9 @@ namespace ExamArchive.Models;
 /// An account that can sign in.
 /// </summary>
 /// <remarks>
-/// Staff only. Students have no accounts — uploading is anonymous and browsing is
-/// public, so the only people who sign in are the ones who review submissions and
-/// the ones who configure the archive.
+/// Students and staff alike. Browsing stays public and needs no account, but
+/// uploading no longer does: a submission that nobody can be held to invites spam
+/// and misleading files, so a paper now arrives attached to whoever sent it.
 /// <para>
 /// Hand-rolled rather than ASP.NET Core Identity. Identity brings seven tables,
 /// two-factor, lockout, external logins, email confirmation and a whole schema
@@ -48,10 +48,16 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
 
     /// <summary>
-    /// Defaults to the lesser of the two, so an account created without an explicit
-    /// role cannot come out as an administrator by omission.
+    /// Defaults to the least privileged of the three, so an account created without
+    /// an explicit role cannot come out as staff by omission.
     /// </summary>
-    public UserRole Role { get; set; } = UserRole.Moderator;
+    /// <remarks>
+    /// This is belt and braces with the declaration order in <see cref="UserRole"/>:
+    /// that makes a missing value on the wire bind to <c>User</c>, and this makes a
+    /// <c>new User()</c> in code do the same. Both matter now that registration
+    /// creates accounts on a path no administrator reviews.
+    /// </remarks>
+    public UserRole Role { get; set; } = UserRole.User;
 
     /// <summary>
     /// Whether the account may sign in. Checked at login, so revoking access is a
