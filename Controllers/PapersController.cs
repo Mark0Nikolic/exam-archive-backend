@@ -13,11 +13,12 @@ namespace ExamArchive.Controllers;
 /// and checking on a submission.
 /// </summary>
 /// <remarks>
-/// Entirely anonymous — nothing here requires or accepts an account. That is the
-/// opposite of <see cref="ModerationController"/>, where <c>[Authorize]</c> sits on
-/// the class and nothing is reachable without it. Each controller defaults to what
-/// is safe for the audience it serves, which is why the two are separate types
-/// rather than one controller with a mix of attributes.
+/// Reading is anonymous and writing is not: browsing and downloading take no
+/// account, submitting takes any account. That is still narrower than
+/// <see cref="ModerationController"/>, where <c>[Authorize]</c> sits on the class
+/// and every action demands a staff role. Each controller defaults to what is safe
+/// for the audience it serves, which is why they remain separate types rather than
+/// one controller with a mix of attributes.
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
@@ -186,19 +187,20 @@ public class PapersController : ControllerBase
     /// a moderator approves it.
     /// </summary>
     /// <remarks>
-    /// Anonymous, and there is no account a submitter could create. Requiring one
-    /// would filter contributors rather than bad submissions, and bad submissions
-    /// are already handled: every paper is read by a moderator before it is
-    /// published. Anonymity is also worth something to a submitter who would rather
-    /// not be named as the source of a circulating exam paper — the same reasoning
-    /// that has uploads stripped of camera metadata.
+    /// Requires an account, which is a change from the archive's original design.
+    /// Anonymity was worth something to a submitter who would rather not be named
+    /// as the source of a circulating exam paper, and it is given up because an
+    /// endpoint open to everyone accepts spam and deliberately misleading files at
+    /// the same rate it accepts papers, and a moderator sorting those by hand is a
+    /// worse outcome than a sign-in prompt.
     /// <para>
-    /// The response carries a claim code, which is the only way the submitter can
-    /// later be told what happened. See <see cref="GetSubmissionStatus"/>.
+    /// Any signed-in account may submit, not only students. A moderator has a
+    /// faster route in — see <see cref="ModerationController.UploadPaper"/>, which
+    /// skips the queue — but nothing here needs to refuse them.
     /// </para>
     /// </remarks>
     [HttpPost("upload")]
-    [AllowAnonymous]
+    [Authorize]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(PaperSubmissionService.MaxTotalUploadBytes)]
     [ProducesResponseType(StatusCodes.Status201Created)]
@@ -207,14 +209,18 @@ public class PapersController : ControllerBase
         [FromForm] UploadPaperRequest request,
         CancellationToken cancellationToken)
     {
-        // Pending: anyone can reach this endpoint, so nothing submitted through it
-        // is published until a moderator has looked at it. That is true of staff
-        // here too — the path that skips the queue is a separate, authorized
-        // endpoint on ModerationController, not a branch in this one.
+        // Pending regardless of who is calling: an account proves somebody can be
+        // held to a submission, not that the submission is any good, so everything
+        // through this endpoint still waits for a moderator. The path that skips the
+        // queue is a separate, authorized endpoint on ModerationController, not a
+        // branch in this one.
         //
-        // No submitter id: this endpoint has no idea who is calling it, by design.
+        // [Authorize] has already established there is a principal, so the id is
+        // present — but it is passed as the nullable it is rather than asserted,
+        // because a cookie from an older sign-in could satisfy the attribute without
+        // carrying the claim.
         var result = await _submissions.SubmitAsync(
-            request, PaperStatus.Pending, submittedByUserId: null, cancellationToken);
+            request, PaperStatus.Pending, User.GetUserId(), cancellationToken);
 
         if (!result.Succeeded)
         {
@@ -232,6 +238,56 @@ public class PapersController : ControllerBase
         return StatusCode(
             StatusCodes.Status201Created,
             UploadedPaperDto.From(result.Paper!, result.ClaimToken));
+    }
+
+    /// <summary>
+    /// Lists the caller's own submissions, newest first, whatever their status.
+    /// </summary>
+    /// <remarks>
+    /// The reason an account is worth having. A rejection reason is written for the
+    /// submitter, and until now the only way to read it was the claim code handed
+    /// out at upload — one code per paper, shown once, unrecoverable if lost. An
+    /// account holds every submission instead, so a submitter who loses track of a
+    /// paper can still find out what happened to it.
+    /// <para>
+    /// Pending and rejected papers appear here and nowhere else on this controller.
+    /// That is not a leak of the moderation queue: the filter is the caller's own
+    /// id, so this shows a submitter their own work and no one else's.
+    /// </para>
+    /// </remarks>
+    [HttpGet("mine")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IEnumerable<SubmissionStatusDto>>> GetMySubmissions(
+        CancellationToken cancellationToken)
+    {
+        var userId = User.GetUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        // Backed by IX_Papers_SubmittedByUserId.
+        var submissions = await _db.Papers
+            .AsNoTracking()
+            .Where(p => p.SubmittedByUserId == userId)
+            .OrderByDescending(p => p.UploadedAt)
+            .ThenByDescending(p => p.Id)
+            .Select(p => new SubmissionStatusDto(
+                p.Id,
+                p.Subject!.NameSr,
+                p.ExamType,
+                p.Month,
+                p.Year,
+                p.UploadedAt,
+                p.Status,
+                p.ReviewedAt,
+                p.RejectionReason))
+            .ToListAsync(cancellationToken);
+
+        return Ok(submissions);
     }
 
     /// <summary>

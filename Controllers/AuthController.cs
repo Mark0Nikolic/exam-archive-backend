@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ExamArchive.Data;
 using ExamArchive.Dtos;
 using ExamArchive.Models;
 using ExamArchive.Services;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Controllers;
 
@@ -31,14 +33,108 @@ namespace ExamArchive.Controllers;
 [Produces("application/json")]
 public class AuthController : ControllerBase
 {
+    private readonly ExamArchiveDbContext _db;
     private readonly UserAccountService _accounts;
     private readonly ILogger<AuthController> _logger;
 
-    public AuthController(UserAccountService accounts, ILogger<AuthController> logger)
+    public AuthController(
+        ExamArchiveDbContext db,
+        UserAccountService accounts,
+        ILogger<AuthController> logger)
     {
+        _db = db;
         _accounts = accounts;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Creates an account and signs it straight in.
+    /// </summary>
+    /// <remarks>
+    /// Submitting used to be anonymous, which meant an open endpoint accepted spam
+    /// and misleading files as readily as exam papers and left a moderator to sort
+    /// them by hand. An account is the cheapest thing that makes a pattern of bad
+    /// submissions answerable: it does not prove who anybody is, but it gives
+    /// repeated abuse a single thing to deactivate.
+    /// <para>
+    /// The role is fixed here rather than taken from the request. Registration is
+    /// the one account-creating path with no administrator behind it, so the caller
+    /// naming their own role is the difference between an archive and a free-for-all.
+    /// </para>
+    /// <para>
+    /// Signed in on success, because requiring a separate login immediately after
+    /// choosing a password is a step that exists only to be annoying.
+    /// </para>
+    /// </remarks>
+    [HttpPost("register")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CurrentUserDto>> Register(
+        [FromBody] RegisterRequest request,
+        CancellationToken cancellationToken)
+    {
+        var username = request.Username.Trim();
+
+        // Checked for a usable message rather than for correctness — the unique
+        // index is what actually guarantees it, and the catch below is what turns
+        // the losing side of a race into a 409 instead of a 500. This endpoint is
+        // reachable by anyone, so that race is worth handling rather than noting.
+        var taken = await _db.Users
+            .AnyAsync(u => u.Username == username, cancellationToken);
+
+        if (taken)
+        {
+            return UsernameTaken(username);
+        }
+
+        var user = new User
+        {
+            Username = username,
+
+            // Stated rather than left to the property initialiser. Both say User
+            // today; only one of them is a decision about what registration grants.
+            Role = UserRole.User,
+            IsActive = true,
+            MustChangePassword = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        user.PasswordHash = _accounts.HashPassword(user, request.Password);
+
+        _db.Users.Add(user);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // The only unique constraint on this table is the username, so this is
+            // the other half of the race above: someone claimed the name between
+            // the check and the insert.
+            return UsernameTaken(username);
+        }
+
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            UserAccountService.BuildPrincipal(user),
+            new AuthenticationProperties { IsPersistent = true });
+
+        _logger.LogInformation("{Username} registered.", user.Username);
+
+        return CreatedAtAction(
+            nameof(Me),
+            new CurrentUserDto(user.Id, user.Username, user.Role));
+    }
+
+    private ObjectResult UsernameTaken(string username) =>
+        Problem(
+            title: "Username taken",
+            detail: $"An account named '{username}' already exists. Usernames are "
+                + "compared without regard to case.",
+            statusCode: StatusCodes.Status409Conflict);
 
     /// <summary>
     /// Signs in and issues the session cookie.

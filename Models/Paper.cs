@@ -29,18 +29,19 @@ public class Paper
     public DateTime UploadedAt { get; set; }
 
     /// <summary>
-    /// The staff account that published this paper directly, or null — which is the
-    /// normal case — for a paper that came in through the public upload.
+    /// The account this paper arrived from — a student who submitted it, or a staff
+    /// member who published it directly.
     /// </summary>
     /// <remarks>
-    /// Not a record of who submitted, because submitters are anonymous and no
-    /// column could hold them. It records who used the staff upload endpoint, which
-    /// is the one path that puts a paper into the archive without anybody reviewing
-    /// it. That path deserves a name attached to it; the reviewed path already has
-    /// a moderator's decision behind it.
+    /// This did once mean "staff only", because submitting was anonymous and there
+    /// was no account a submitter could have. Now that uploading requires signing
+    /// in, it is simply who sent the paper, and it is what backs a submitter's own
+    /// list of what they have contributed.
     /// <para>
-    /// Set to null rather than cascading when an account is removed, so deleting a
-    /// user never deletes archived papers.
+    /// Still nullable, for two kinds of row: papers archived before accounts were
+    /// required, and papers whose submitter's account was later deleted. Removing an
+    /// account sets this to null rather than cascading, so deleting a user never
+    /// deletes the papers they contributed.
     /// </para>
     /// </remarks>
     public int? SubmittedByUserId { get; set; }

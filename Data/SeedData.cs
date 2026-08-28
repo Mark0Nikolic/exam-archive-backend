@@ -105,6 +105,7 @@ public static class SeedData
         await BackfillMajorNamesAsync(db);
 
         await SeedCatalogueAsync(db);
+        await BackfillPaperSubmittersAsync(db, logger);
 
         // Last, and unconditional for the same reason: it needs the papers above to
         // exist, and it is what repairs a database whose uploads folder was emptied.
@@ -303,6 +304,63 @@ public static class SeedData
         // taught but has an empty archive, which the UI will need to handle.
 
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Gives papers with no submitter one, spread across the student accounts.
+    /// </summary>
+    /// <remarks>
+    /// Two kinds of row need this: sample papers, which are created before anybody
+    /// is attributed to them, and anything archived while uploading was still
+    /// anonymous. Either way the result is a submissions list that is empty for
+    /// every account, which is indistinguishable from the query being broken — and
+    /// that is a bad thing to be debugging while also writing the client.
+    /// <para>
+    /// A separate pass rather than part of building the papers, so that one piece of
+    /// code covers both an empty database and one that already has rows. Ordered by
+    /// id, so a paper lands on the same student on every run, and idempotent because
+    /// a row only qualifies while its submitter is null.
+    /// </para>
+    /// </remarks>
+    private static async Task BackfillPaperSubmittersAsync(
+        ExamArchiveDbContext db,
+        ILogger logger)
+    {
+        var unattributed = await db.Papers
+            .Where(p => p.SubmittedByUserId == null)
+            .OrderBy(p => p.Id)
+            .ToListAsync();
+
+        if (unattributed.Count == 0)
+        {
+            return;
+        }
+
+        var studentIds = await db.Users
+            .Where(u => u.Role == UserRole.User)
+            .OrderBy(u => u.Id)
+            .Select(u => u.Id)
+            .ToListAsync();
+
+        // Guarded rather than assumed: the modulo below divides by this count, and a
+        // database whose student accounts were removed by hand would otherwise take
+        // startup down with it.
+        if (studentIds.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < unattributed.Count; i++)
+        {
+            unattributed[i].SubmittedByUserId = studentIds[i % studentIds.Count];
+        }
+
+        await db.SaveChangesAsync();
+
+        logger.LogInformation(
+            "Attributed {Count} papers across {StudentCount} student accounts.",
+            unattributed.Count,
+            studentIds.Count);
     }
 
     /// <summary>
