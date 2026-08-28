@@ -99,6 +99,36 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=2
 Accept: application/json
 
+### ==================== Pagination ====================
+### Every listing answers with {"data": [...], "meta": {page, perPage, totalItems,
+### totalPages}} — the rows alone never say whether there are more. Ten per page
+### unless asked otherwise, and 100 is the ceiling.
+###
+### The two knobs are `page` and `perPage`, named for the keys they come back as,
+### so a client can send back what it was handed.
+
+### Second page of the whole archive, five at a time
+GET {{ExamArchive_HostAddress}}/api/papers?page=2&perPage=5
+Accept: application/json
+
+### Over the ceiling — served 100, and meta.perPage says so rather than a 400
+GET {{ExamArchive_HostAddress}}/api/papers?perPage=1000
+Accept: application/json
+
+### Past the end — an empty data array with honest totals, not a 404, so a client
+### holding a stale page number can see it has overshot and step back
+GET {{ExamArchive_HostAddress}}/api/papers?page=999
+Accept: application/json
+
+### Nonsense values are clamped, not rejected: page 0 is page 1
+GET {{ExamArchive_HostAddress}}/api/papers?page=0&perPage=0
+Accept: application/json
+
+### Reference lists are paged too — ask for a full page to fill a dropdown in one
+### request rather than looping
+GET {{ExamArchive_HostAddress}}/api/majors?perPage=100
+Accept: application/json
+
 ### Pages of an approved paper
 GET {{ExamArchive_HostAddress}}/api/papers/1/files
 Accept: application/json
@@ -124,37 +154,37 @@ Accept: application/json
 ### Sign in as admin first. A moderator gets 403 on everything here.
 
 ### Every staff account, including deactivated ones
-GET {{ExamArchive_HostAddress}}/api/admin/users
+GET {{ExamArchive_HostAddress}}/api/users
 Accept: application/json
 
 ### Create an account for a professor. The response carries a generated password —
 ### it is shown once and never again, so read it out before closing the window.
 ### The account can sign in but do nothing else until it replaces that password.
-POST {{ExamArchive_HostAddress}}/api/admin/users
+POST {{ExamArchive_HostAddress}}/api/users
 Content-Type: application/json
 
 {
   "username": "prof.jovanovic",
-  "role": "Moderator"
+  "role": 3
 }
 
 ### Promote to admin. This is how the archive stops depending on one administrator.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/role
+POST {{ExamArchive_HostAddress}}/api/users/3/role
 Content-Type: application/json
 
 {
-  "role": "Admin"
+  "role": 2
 }
 
 ### Somebody forgot their password. This is the whole of password recovery.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/reset-password
+POST {{ExamArchive_HostAddress}}/api/users/3/reset-password
 
 ### Somebody left. Deactivate rather than delete, so their past decisions keep
 ### their name on them. Refused with 409 if this is the last active admin.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/deactivate
+POST {{ExamArchive_HostAddress}}/api/users/3/deactivate
 
 ### Somebody came back. The password is untouched.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/activate
+POST {{ExamArchive_HostAddress}}/api/users/3/activate
 
 ### ==================== Moderation (Moderator or Admin) ====================
 ### 401 with no session. 403 would mean a signed-in account without the role,
