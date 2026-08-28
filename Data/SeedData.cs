@@ -79,20 +79,32 @@ public static class SeedData
     [
         ("admin", UserRole.Admin),
         ("moderator", UserRole.Moderator),
+        ("student", UserRole.User),
     ];
 
     public static async Task SeedAsync(
         ExamArchiveDbContext db,
         UserAccountService accounts,
+        PaperFileStorage storage,
         ILogger logger)
     {
-        // All three run before the early return below, because a database that was
-        // already seeded is exactly the one carrying the pre-localization names and
-        // missing the accounts.
+        // These run unconditionally, because a database that was already seeded is
+        // exactly the one carrying the pre-localization names and missing the
+        // accounts.
         await SeedUsersAsync(db, accounts, logger);
         await BackfillSubjectCodesAsync(db);
         await BackfillMajorNamesAsync(db);
 
+        await SeedCatalogueAsync(db);
+
+        // Last, and unconditional for the same reason: it needs the papers above to
+        // exist, and it is what repairs a database whose uploads folder was emptied.
+        await WriteSampleFilesAsync(db, storage, logger);
+    }
+
+    /// <summary>Creates the sample catalogue and its papers, on an empty database only.</summary>
+    private static async Task SeedCatalogueAsync(ExamArchiveDbContext db)
+    {
         // Idempotent: if majors already exist, assume seeding has run.
         if (await db.Majors.AnyAsync())
         {
@@ -211,8 +223,8 @@ public static class SeedData
                 RejectionReason = status == PaperStatus.Rejected ? rejectionReason : null,
 
                 // Single-page PDFs, matching what the archive held before uploads
-                // could carry several images. No bytes exist on disk for these —
-                // they populate listings, and downloading one returns 404.
+                // could carry several images. The bytes are written separately by
+                // WriteSampleFilesAsync, which also fills in the size below.
                 Files =
                 [
                     new PaperFile
@@ -221,8 +233,8 @@ public static class SeedData
                         ContentType = PaperFileTypes.Pdf.ContentType,
                         PageNumber = 1,
 
-                        // No bytes exist for these, so the size is unrecorded
-                        // rather than invented.
+                        // Zero until the bytes are written, and the marker
+                        // WriteSampleFilesAsync looks for.
                         SizeBytes = 0
                     }
                 ]
@@ -282,6 +294,76 @@ public static class SeedData
         // taught but has an empty archive, which the UI will need to handle.
 
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Writes a real PDF for every paper file that has none, and records its size.
+    /// </summary>
+    /// <remarks>
+    /// Seeding creates rows, not bytes, so without this every seeded paper lists
+    /// correctly and then 404s the moment something tries to open it — a confusing
+    /// first impression for a client being written against the archive.
+    /// <para>
+    /// <c>SizeBytes == 0</c> is the filter, and it is precise rather than merely
+    /// convenient: a real upload always records a real length, so a genuinely
+    /// missing file from a real submission is left alone instead of being papered
+    /// over with an invented page. It also makes this idempotent, since writing the
+    /// file is what stops the row matching.
+    /// </para>
+    /// </remarks>
+    private static async Task WriteSampleFilesAsync(
+        ExamArchiveDbContext db,
+        PaperFileStorage storage,
+        ILogger logger)
+    {
+        var pending = await db.PaperFiles
+            .Include(f => f.Paper!)
+                .ThenInclude(paper => paper.Subject)
+            .Where(f => f.SizeBytes == 0)
+            .ToListAsync();
+
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        var written = 0;
+
+        foreach (var file in pending)
+        {
+            // Routed through the storage service rather than combined by hand, so a
+            // stored path that escapes the uploads folder is refused here exactly as
+            // it would be on the download path.
+            if (!storage.TryResolve(file.StoredPath, out var absolutePath))
+            {
+                logger.LogWarning(
+                    "Skipped {StoredPath}: it does not resolve inside the uploads folder.",
+                    file.StoredPath);
+
+                continue;
+            }
+
+            var paper = file.Paper!;
+
+            var bytes = SamplePdf.Render(
+            [
+                "EXAM ARCHIVE - SAMPLE PAPER",
+                $"{paper.Subject!.Code ?? "PAPER"} - {paper.ExamType} - {paper.Month:D2}/{paper.Year}",
+                $"Page {file.PageNumber}",
+            ]);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+            await File.WriteAllBytesAsync(absolutePath, bytes);
+
+            file.SizeBytes = bytes.Length;
+            written++;
+        }
+
+        await db.SaveChangesAsync();
+
+        logger.LogInformation(
+            "Wrote {Count} placeholder paper files so seeded papers can be opened.",
+            written);
     }
 
     /// <summary>

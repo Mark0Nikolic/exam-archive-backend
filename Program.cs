@@ -150,7 +150,9 @@ using (var scope = app.Services.CreateScope())
         // This branch is the only thing standing between the seeded accounts and a
         // real deployment, which is why the accounts are created here and not in a
         // migration.
-        await SeedData.SeedAsync(db, accounts, app.Logger);
+        var storage = scope.ServiceProvider.GetRequiredService<PaperFileStorage>();
+
+        await SeedData.SeedAsync(db, accounts, storage, app.Logger);
     }
 
     // Unconditional, unlike the seeding above: this is the production path, and it
