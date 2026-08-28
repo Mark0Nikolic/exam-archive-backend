@@ -30,7 +30,7 @@ public class User
     /// </summary>
     /// <remarks>
     /// The case-insensitivity is a collation on the column rather than a second
-    /// normalized copy of the string, which is how Identity does it. On SQLite that
+    /// normalized copy of the string, which is how Identity does it. A _ci collation
     /// makes the unique index case-insensitive too, so the database refuses a
     /// second "MARKO" instead of trusting the application to check.
     /// </remarks>

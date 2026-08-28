@@ -16,7 +16,7 @@ namespace ExamArchive.Services;
 /// admin" rather than "no users at all". An admin who is locked out, deactivated by
 /// a colleague, or has simply forgotten their password can be restored by setting
 /// two environment variables and restarting, instead of by editing the database
-/// with a SQLite browser.
+/// by hand.
 /// </para>
 /// </remarks>
 public static class AdminBootstrap
@@ -88,7 +88,7 @@ public static class AdminBootstrap
 
         username = username.Trim();
 
-        // Matched case-insensitively by the column's NOCASE collation, so
+        // Matched case-insensitively by the column's collation, so
         // "Admin" finds the account created as "admin" rather than colliding
         // with it on the unique index.
         var user = await db.Users

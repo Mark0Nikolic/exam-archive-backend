@@ -34,11 +34,9 @@ public class MajorsController : ControllerBase
             query = query.Where(m => m.StudiesId == studiesId);
         }
 
-        // Not sorted by name here. SQLite compares text byte by byte, which puts
-        // Č, Ć, Š, Ž and Đ after Z and would exile every major starting with one
-        // to the bottom of the list. Correct order also depends on which language
-        // and script the reader picked, which only the client knows — so it sorts,
-        // with localeCompare(_, 'sr').
+        // Not sorted by name here: the correct order depends on which language and
+        // script the reader picked, which only the client knows — so it sorts, with
+        // localeCompare(_, 'sr').
         //
         // Projecting in the query means EF selects only these columns and never
         // materialises an entity graph, so there is nothing to serialise circularly.

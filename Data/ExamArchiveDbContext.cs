@@ -66,9 +66,9 @@ public class ExamArchiveDbContext : DbContext
 
             // Unique, so the database itself rejects a duplicate code no matter
             // what inserts it. A code that can repeat is not an identifier, just a
-            // second name. Rows without a code are exempt: SQLite treats NULLs as
-            // distinct from one another in a unique index, which is what allows
-            // subjects to exist before their code is known.
+            // second name. Rows without a code are exempt: NULLs are distinct from
+            // one another in a unique index, which is what allows subjects to exist
+            // before their code is known.
             entity.HasIndex(s => s.Code)
                 .IsUnique();
         });
@@ -110,7 +110,7 @@ public class ExamArchiveDbContext : DbContext
 
             // Stored as the enum's name, not its number: it keeps the existing
             // text column and CK_Paper_Status constraint working, and leaves the
-            // table readable by eye in a SQLite browser.
+            // table readable by eye in a database client.
             entity.Property(p => p.Status)
                 .IsRequired()
                 .HasConversion<string>()
@@ -157,8 +157,8 @@ public class ExamArchiveDbContext : DbContext
 
             // Unique, and the index is what makes the lookup a single seek rather
             // than a scan of every paper on each status check. NULLs are distinct
-            // from one another in SQLite, so the many papers without a code — staff
-            // uploads and everything predating this column — are exempt.
+            // from one another, so the many papers without a code — staff uploads and
+            // everything predating this column — are exempt.
             entity.HasIndex(p => p.ClaimTokenHash)
                 .IsUnique();
 

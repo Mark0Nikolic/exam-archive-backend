@@ -25,7 +25,7 @@ public class Paper
 
     public int Year { get; set; }
 
-    /// <summary>Left at default so SQLite fills it in with CURRENT_TIMESTAMP on insert.</summary>
+    /// <summary>Left at default so the database fills it in on insert, in UTC.</summary>
     public DateTime UploadedAt { get; set; }
 
     /// <summary>

@@ -34,8 +34,7 @@ public class SubjectsController : ControllerBase
     {
         // Query starts at the junction rather than at Subject, because the row
         // being filtered on is what carries YearOfStudy.
-        // Ordered by year only. Sorting by name belongs to the client: SQLite
-        // compares text byte by byte, so Serbian diacritics sort after Z, and the
+        // Ordered by year only. Sorting by name belongs to the client, because the
         // right order depends on the language and script the reader chose.
         var subjects = await _db.MajorSubjects
             .AsNoTracking()
