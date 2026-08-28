@@ -78,6 +78,7 @@ public static class SeedData
     /// </summary>
     private static readonly (string Username, UserRole Role)[] DevAccounts =
     [
+        ("superadmin", UserRole.SuperAdmin),
         ("admin", UserRole.Admin),
         ("moderator", UserRole.Moderator),
 

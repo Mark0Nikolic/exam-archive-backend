@@ -124,37 +124,37 @@ Accept: application/json
 ### Sign in as admin first. A moderator gets 403 on everything here.
 
 ### Every staff account, including deactivated ones
-GET {{ExamArchive_HostAddress}}/api/admin/users
+GET {{ExamArchive_HostAddress}}/api/users
 Accept: application/json
 
 ### Create an account for a professor. The response carries a generated password —
 ### it is shown once and never again, so read it out before closing the window.
 ### The account can sign in but do nothing else until it replaces that password.
-POST {{ExamArchive_HostAddress}}/api/admin/users
+POST {{ExamArchive_HostAddress}}/api/users
 Content-Type: application/json
 
 {
   "username": "prof.jovanovic",
-  "role": "Moderator"
+  "role": 3
 }
 
 ### Promote to admin. This is how the archive stops depending on one administrator.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/role
+POST {{ExamArchive_HostAddress}}/api/users/3/role
 Content-Type: application/json
 
 {
-  "role": "Admin"
+  "role": 2
 }
 
 ### Somebody forgot their password. This is the whole of password recovery.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/reset-password
+POST {{ExamArchive_HostAddress}}/api/users/3/reset-password
 
 ### Somebody left. Deactivate rather than delete, so their past decisions keep
 ### their name on them. Refused with 409 if this is the last active admin.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/deactivate
+POST {{ExamArchive_HostAddress}}/api/users/3/deactivate
 
 ### Somebody came back. The password is untouched.
-POST {{ExamArchive_HostAddress}}/api/admin/users/3/activate
+POST {{ExamArchive_HostAddress}}/api/users/3/activate
 
 ### ==================== Moderation (Moderator or Admin) ====================
 ### 401 with no session. 403 would mean a signed-in account without the role,

@@ -312,14 +312,15 @@ public class AuthController : ControllerBase
     public ActionResult<CurrentUserDto> Me()
     {
         var id = User.GetUserId();
-        var role = User.FindFirstValue(ClaimTypes.Role);
+        var role = User.GetRole();
 
         // [Authorize] only proves a principal exists, not that it carries the
         // claims this application put there. A cookie issued by an older version of
-        // the sign-in code would satisfy it and still be missing one of these, so
-        // both are checked rather than dereferenced. Answering 401 tells the
-        // frontend to sign in again, which reissues a cookie in the current shape.
-        if (id is null || !Enum.TryParse<UserRole>(role, out var parsedRole))
+        // the sign-in code would satisfy it and still be missing one of these — or
+        // carry a role name where a number is now expected — so both are checked
+        // rather than dereferenced. Answering 401 tells the frontend to sign in
+        // again, which reissues a cookie in the current shape.
+        if (id is null || role is null)
         {
             return Unauthorized();
         }
@@ -327,6 +328,6 @@ public class AuthController : ControllerBase
         return Ok(new CurrentUserDto(
             id.Value,
             User.Identity?.Name ?? string.Empty,
-            parsedRole));
+            role.Value));
     }
 }

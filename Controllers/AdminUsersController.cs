@@ -23,9 +23,9 @@ namespace ExamArchive.Controllers;
 /// </para>
 /// </remarks>
 [ApiController]
-[Route("api/admin/users")]
+[Route("api/users")]
 [Produces("application/json")]
-[Authorize(Roles = nameof(UserRole.Admin))]
+[Authorize(Policy = RolePolicies.Administrators)]
 public class AdminUsersController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -45,18 +45,21 @@ public class AdminUsersController : ControllerBase
     /// <summary>Lists every staff account, active or not.</summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<UserSummaryDto>>> GetUsers(
+    public async Task<ActionResult<PagedResult<UserSummaryDto>>> GetUsers(
+        [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
     {
         // Deactivated accounts are included: they are the ones an admin is most
         // likely to be looking for, either to reinstate somebody or to check that a
         // departure was actually processed.
+        // Username is unique, so ordering by it alone is already a total order and
+        // needs no tiebreaker to page safely.
         var users = await _db.Users
             .AsNoTracking()
             .OrderBy(u => u.Username)
             .Select(u => new UserSummaryDto(
                 u.Id, u.Username, u.Role, u.IsActive, u.MustChangePassword, u.CreatedAt))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(users);
     }
@@ -79,6 +82,11 @@ public class AdminUsersController : ControllerBase
         [FromBody] CreateUserRequest request,
         CancellationToken cancellationToken)
     {
+        if (RequireSuperAdminFor(request.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var username = request.Username.Trim();
 
         // Checked here for a decent error message; the unique index is what actually
@@ -151,6 +159,14 @@ public class AdminUsersController : ControllerBase
             return NotFound();
         }
 
+        // An issued password is one the issuer knows until it is replaced, so
+        // resetting an administrator's is indistinguishable from taking their
+        // account for as long as they have not signed in.
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var temporaryPassword = UserAccountService.GenerateTemporaryPassword();
 
         user.PasswordHash = _accounts.HashPassword(user, temporaryPassword);
@@ -182,6 +198,11 @@ public class AdminUsersController : ControllerBase
         if (user is null)
         {
             return NotFound();
+        }
+
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
         }
 
         if (user.IsActive && await WouldRemoveLastAdminAsync(user, cancellationToken))
@@ -218,6 +239,13 @@ public class AdminUsersController : ControllerBase
         if (user is null)
         {
             return NotFound();
+        }
+
+        // Symmetrical with deactivation: an admin who could not switch a colleague
+        // off must not be able to switch one back on either.
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
         }
 
         user.IsActive = true;
@@ -266,7 +294,14 @@ public class AdminUsersController : ControllerBase
             return Ok(Summarize(user));
         }
 
-        if (request.Role != UserRole.Admin
+        // Both ends: promoting into the tier and demoting out of it are equally the
+        // super administrator's call.
+        if (RequireSuperAdminFor(user.Role, request.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
+        if (!RolePolicies.IsAdministrative(request.Role)
             && await WouldRemoveLastAdminAsync(user, cancellationToken))
         {
             return LastAdminConflict("demoted");
@@ -302,7 +337,7 @@ public class AdminUsersController : ControllerBase
     /// </remarks>
     private async Task<bool> WouldRemoveLastAdminAsync(User user, CancellationToken cancellationToken)
     {
-        if (user.Role != UserRole.Admin || !user.IsActive)
+        if (!RolePolicies.IsAdministrative(user.Role) || !user.IsActive)
         {
             return false;
         }
@@ -311,8 +346,13 @@ public class AdminUsersController : ControllerBase
         // read and the write that follows it. Both must be inside one transaction
         // for that to hold, which is why every caller opens one.
         //
-        // Every active admin is locked, not just the others, and always in the same
-        // order. Locking only the others would have two admins demoting each other
+        // Both administrative roles count, so demoting the last admin is refused
+        // while a super admin is still active and vice versa: the invariant is that
+        // somebody can still manage accounts, not that a particular role survives.
+        // Written as numbers because that is what the column now holds.
+        //
+        // Every active administrator is locked, not just the others, and always in
+        // the same order. Locking only the others would have two admins demoting each other
         // take each other's row and deadlock; locking the whole set in a fixed order
         // makes the second request wait, then re-read a world where the first has
         // already committed and correctly refuse.
@@ -320,10 +360,42 @@ public class AdminUsersController : ControllerBase
         // Counted in memory rather than by the database because COUNT(*) over a
         // locking read is not portable, and this set is only ever a handful of rows.
         var activeAdmins = await _db.Users
-            .FromSql($"SELECT * FROM Users WHERE Role = 'Admin' AND IsActive = TRUE ORDER BY Id FOR UPDATE")
+            .FromSql($"SELECT * FROM Users WHERE Role IN (1, 2) AND IsActive = TRUE ORDER BY Id FOR UPDATE")
             .ToListAsync(cancellationToken);
 
         return activeAdmins.TrueForAll(admin => admin.Id == user.Id);
+    }
+
+    /// <summary>
+    /// Refuses an operation on the administrative tier unless the caller runs the
+    /// installation.
+    /// </summary>
+    /// <remarks>
+    /// The whole reason <see cref="UserRole.SuperAdmin"/> exists. Without it any
+    /// administrator can create, demote, deactivate or take over the password of any
+    /// other, so the tier has no owner and the last admin standing decides who else
+    /// exists. Applied to both ends of a role change — an admin may not mint one and
+    /// may not unmake one either, since being able to remove every peer is the same
+    /// power wearing a different hat.
+    /// <para>
+    /// 403 rather than 404: the caller is a legitimate administrator who reached a
+    /// real account, and hiding that it exists would only make the refusal look like
+    /// a bug.
+    /// </para>
+    /// </remarks>
+    private ObjectResult? RequireSuperAdminFor(params UserRole[] roles)
+    {
+        if (!roles.Any(RolePolicies.IsAdministrative)
+            || User.GetRole() == UserRole.SuperAdmin)
+        {
+            return null;
+        }
+
+        return Problem(
+            title: "Super administrator required",
+            detail: "Only a super administrator may create, promote, demote, "
+                + "deactivate or reset the password of an administrator.",
+            statusCode: StatusCodes.Status403Forbidden);
     }
 
     private ObjectResult LastAdminConflict(string action) =>

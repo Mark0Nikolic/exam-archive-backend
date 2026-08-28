@@ -52,10 +52,11 @@ public class User
     /// an explicit role cannot come out as staff by omission.
     /// </summary>
     /// <remarks>
-    /// This is belt and braces with the declaration order in <see cref="UserRole"/>:
-    /// that makes a missing value on the wire bind to <c>User</c>, and this makes a
-    /// <c>new User()</c> in code do the same. Both matter now that registration
-    /// creates accounts on a path no administrator reviews.
+    /// A missing value on the wire no longer lands here — it binds to zero, which is
+    /// not a role at all and is refused by the DTOs and the check constraint. This
+    /// initialiser covers the other direction: a <c>new User()</c> in code starts at
+    /// the bottom of the hierarchy rather than at zero, so a code path that forgets
+    /// to assign a role produces a student and not an unstorable account.
     /// </remarks>
     public UserRole Role { get; set; } = UserRole.User;
 

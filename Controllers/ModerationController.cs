@@ -27,7 +27,7 @@ namespace ExamArchive.Controllers;
 [ApiController]
 [Route("api/moderation")]
 [Produces("application/json")]
-[Authorize(Roles = $"{nameof(UserRole.Moderator)},{nameof(UserRole.Admin)}")]
+[Authorize(Policy = RolePolicies.Staff)]
 public class ModerationController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -67,7 +67,8 @@ public class ModerationController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<IEnumerable<ModerationPaperDto>>> GetPapers(
+    public async Task<ActionResult<PagedResult<ModerationPaperDto>>> GetPapers(
+        [FromQuery] PageRequest paging,
         [FromQuery] PaperStatus status = PaperStatus.Pending,
         CancellationToken cancellationToken = default)
     {
@@ -91,7 +92,7 @@ public class ModerationController : ControllerBase
                 p.Status,
                 p.ReviewedAt,
                 p.RejectionReason))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(papers);
     }
@@ -295,7 +296,7 @@ public class ModerationController : ControllerBase
     /// </para>
     /// </remarks>
     [HttpDelete("papers/{id:int}")]
-    [Authorize(Roles = nameof(UserRole.Admin))]
+    [Authorize(Policy = RolePolicies.Administrators)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

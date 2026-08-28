@@ -7,34 +7,52 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+#if DEBUG
+// A Debug build launched as the .exe (or with a misconfigured debugger) defaults to
+// Production and never reads appsettings.Development.json. If that file is present on
+// this machine, treat the run as local development rather than failing on a missing
+// committed connection string.
+if (builder.Environment.IsProduction()
+    && File.Exists(Path.Combine(builder.Environment.ContentRootPath, "appsettings.Development.json")))
+{
+    builder.Configuration.AddJsonFile("appsettings.Development.json", optional: false, reloadOnChange: true);
+    builder.Environment.EnvironmentName = Environments.Development;
+}
+#endif
+
 // Deliberately absent from appsettings.json, which is committed: this string
 // carries a database password. It belongs in appsettings.Development.json or in
 // user-secrets, both of which stay on the machine that owns them.
 //
-// The message spells out the shape because the file it asks for is gitignored,
-// so a fresh clone has nothing to copy and this exception is the only instruction
-// anybody gets.
+// The message names the environment because the failure looks identical whether
+// the setting is missing or merely unread, and the second is far more likely: the
+// file exists, and the app was started somewhere it is not loaded from.
 var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException(
-        "Connection string 'Default' was not found. Create appsettings.Development.json "
-        + "next to appsettings.json containing: "
-        + "{\"ConnectionStrings\":{\"Default\":\"server=localhost;port=3306;"
-        + "database=examarchive;user=examarchive;password=YOUR_PASSWORD\"}} "
+        $"Connection string 'Default' was not found, and the current environment is "
+        + $"'{builder.Environment.EnvironmentName}'.\n\n"
+        + "If appsettings.Development.json already exists with the string in it, then "
+        + "the environment above is the problem rather than the file: that file is only "
+        + "read when the environment is Development, and the environment is only set to "
+        + "Development by Properties/launchSettings.json — which applies to `dotnet run` "
+        + "and to the IDE's run button, but not to launching "
+        + "bin/Debug/net10.0/ExamArchive.exe directly. Start it one of those ways, or set "
+        + "ASPNETCORE_ENVIRONMENT=Development first.\n\n"
+        + "If the file does not exist, create it next to appsettings.json with a "
+        + "ConnectionStrings.Default entry of the form "
+        + "server=localhost;port=3306;database=examarchive;user=root;password=... "
         + "— or set it with `dotnet user-secrets set ConnectionStrings:Default \"...\"`. "
         + "Never put it in appsettings.json, which is committed to the repository.");
 
 builder.Services.AddDbContext<ExamArchiveDbContext>(options =>
     options.UseMySQL(connectionString));
 
-// Storage is stateless and resolves its root once, so a singleton. The server
-// wraps a DbContext and has to follow its scope.
 builder.Services.AddSingleton<PaperFileStorage>();
 builder.Services.AddScoped<PaperFileServer>();
 builder.Services.AddSingleton<ImageSanitizer>();
 builder.Services.AddScoped<PaperSubmissionService>();
 builder.Services.AddScoped<UserAccountService>();
 
-// Sessions are cookies. See AuthController for why, rather than bearer tokens.
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -85,7 +103,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options => options.AddRolePolicies());
 
 // The browser blocks a cross-origin request unless the server names the origin it
 // came from, which every request from a separately-hosted frontend is. Origins are
@@ -121,7 +139,12 @@ if (allowedOrigins.Length > 0)
 // shape of responses that have always carried "Pending".
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    {
+        // Before the string converter, which claims every enum and would otherwise
+        // win this one back. Roles travel as numbers; everything else keeps its name.
+        options.JsonSerializerOptions.Converters.Add(new UserRoleJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddOpenApi();

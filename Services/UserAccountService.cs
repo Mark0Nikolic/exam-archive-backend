@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -329,7 +330,10 @@ public sealed class UserAccountService
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.Username),
-            new(ClaimTypes.Role, user.Role.ToString())
+            // The number, not the name. A claim value can only be a string, so it
+            // travels as text — but it is the same text the policies compare, and
+            // ClaimsPrincipalExtensions.GetRole is the only thing that reads it.
+            new(ClaimTypes.Role, ((int)user.Role).ToString(CultureInfo.InvariantCulture))
         };
 
         // Added only when true, so the absence of the claim is the normal state and

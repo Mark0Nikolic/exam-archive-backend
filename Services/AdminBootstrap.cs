@@ -39,8 +39,11 @@ public static class AdminBootstrap
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
+        // Specifically a super administrator, not any administrator. This is the
+        // account that owns the administrator tier, so a machine with admins but no
+        // super admin is still missing the one nobody else can create.
         var hasActiveAdmin = await db.Users
-            .AnyAsync(u => u.Role == UserRole.Admin && u.IsActive, cancellationToken);
+            .AnyAsync(u => u.Role == UserRole.SuperAdmin && u.IsActive, cancellationToken);
 
         if (hasActiveAdmin)
         {
@@ -106,7 +109,7 @@ public static class AdminBootstrap
         // or demoted admin is the case this exists to repair. Anyone who can set
         // these variables already has the machine, and therefore the database file,
         // so this grants no access they could not take directly.
-        user.Role = UserRole.Admin;
+        user.Role = UserRole.SuperAdmin;
         user.IsActive = true;
         user.PasswordHash = accounts.HashPassword(user, password);
 

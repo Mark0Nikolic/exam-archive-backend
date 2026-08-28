@@ -31,6 +31,8 @@ public class CreateUserRequest
     /// What the account may do. Required rather than defaulted, so creating an
     /// administrator is always something someone typed on purpose.
     /// </summary>
-    [Required]
+    // Required does not reject a missing value on an enum — it binds to zero.
+    // EnumDataType does, because zero is not a defined member of UserRole.
+    [EnumDataType(typeof(UserRole), ErrorMessage = "A valid role is required.")]
     public UserRole Role { get; set; }
 }

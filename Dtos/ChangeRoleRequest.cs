@@ -14,6 +14,8 @@ namespace ExamArchive.Dtos;
 /// </remarks>
 public class ChangeRoleRequest
 {
-    [Required]
+    // Required does not reject a missing value on an enum — it binds to zero.
+    // EnumDataType does, because zero is not a defined member of UserRole.
+    [EnumDataType(typeof(UserRole), ErrorMessage = "A valid role is required.")]
     public UserRole Role { get; set; }
 }

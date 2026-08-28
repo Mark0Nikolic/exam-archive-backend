@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ExamArchive.Models;
 
 namespace ExamArchive.Services;
 
@@ -26,5 +27,30 @@ public static class ClaimsPrincipalExtensions
         var value = principal.FindFirstValue(ClaimTypes.NameIdentifier);
 
         return int.TryParse(value, out var id) ? id : null;
+    }
+
+    /// <summary>
+    /// The signed-in account's role, or null when the caller is anonymous or the
+    /// cookie does not carry a role this application recognises.
+    /// </summary>
+    /// <remarks>
+    /// A claim value is always a string — the framework has no other kind — so the
+    /// number makes the round trip as text and is parsed back here. This is the one
+    /// place that happens, which is what keeps the rest of the application dealing
+    /// in <see cref="UserRole"/>.
+    /// <para>
+    /// IsDefined matters as much as the parse: a cookie carrying "9" would otherwise
+    /// produce a UserRole that equals no member, pass no policy, and be very hard to
+    /// account for while reading the code. Null says "no usable role", and every
+    /// caller already has to handle that.
+    /// </para>
+    /// </remarks>
+    public static UserRole? GetRole(this ClaimsPrincipal principal)
+    {
+        var value = principal.FindFirstValue(ClaimTypes.Role);
+
+        return int.TryParse(value, out var number) && Enum.IsDefined(typeof(UserRole), number)
+            ? (UserRole)number
+            : null;
     }
 }

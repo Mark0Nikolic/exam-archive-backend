@@ -296,10 +296,12 @@ public class ExamArchiveDbContext : DbContext
                 .IsRequired()
                 .HasMaxLength(256);
 
+            // No string conversion, unlike Status and ExamType: this column stores the
+            // enum's number. Roles are never read by eye out of this table the way a
+            // paper's status is, and the names still travel everywhere it matters —
+            // the role claim and the API both carry "Admin", not 2.
             entity.Property(u => u.Role)
-                .IsRequired()
-                .HasConversion<string>()
-                .HasMaxLength(20);
+                .IsRequired();
 
             entity.Property(u => u.IsActive)
                 .HasDefaultValue(true);
@@ -319,13 +321,13 @@ public class ExamArchiveDbContext : DbContext
 
             entity.ToTable(t =>
             {
-                // The authorization policies name these strings. A typo that put
-                // 'Moderater' in the column would produce an account that passes
-                // login and silently fails every [Authorize(Roles = ...)] check,
-                // which is a confusing way to find a spelling mistake.
+                // Zero is absent from the list on purpose: it is what an omitted
+                // role binds to, so an account can never be stored with one that
+                // nobody chose. The DTOs reject it first, with a message; this is
+                // what makes that impossible rather than merely unlikely.
                 t.HasCheckConstraint(
                     "CK_User_Role",
-                    "`Role` IN ('User', 'Moderator', 'Admin')");
+                    "`Role` IN (1, 2, 3, 4)");
             });
         });
     }

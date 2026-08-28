@@ -46,18 +46,14 @@ public class PapersController : ControllerBase
     /// Restricts the list to one subject. Optional: omitted, the whole archive is
     /// browsed, which is what a landing page showing recent additions needs.
     /// </param>
-    /// <param name="limit">
-    /// How many papers to return, clamped to a sane range. Present because the
-    /// unfiltered list grows without bound as the archive fills, and an endpoint
-    /// that returns every row eventually returns too many.
-    /// </param>
+    /// <param name="paging">Which page to return. See <see cref="PageRequest"/>.</param>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<IEnumerable<PaperDto>>> GetPapers(
+    public async Task<ActionResult<PagedResult<PaperDto>>> GetPapers(
         [FromQuery] int? subjectId,
-        CancellationToken cancellationToken,
-        [FromQuery] int limit = 100)
+        [FromQuery] PageRequest paging,
+        CancellationToken cancellationToken)
     {
         var query = _db.Papers
             .AsNoTracking()
@@ -74,11 +70,10 @@ public class PapersController : ControllerBase
             .OrderByDescending(p => p.Year)
             .ThenByDescending(p => p.Month)
 
-            // Id last so the order is total. Without it two papers sat in the same
-            // month come back in whatever order the server felt like, which makes a
-            // list appear to reshuffle between identical requests.
+            // Id last so the order is total, which paging depends on: without it
+            // two papers sat in the same month are tie-broken however the server
+            // feels on the day, and a row can appear on two pages or on none.
             .ThenByDescending(p => p.Id)
-            .Take(Math.Clamp(limit, 1, 200))
             .Select(p => new PaperDto(
                 p.Id,
                 p.SubjectId,
@@ -89,7 +84,7 @@ public class PapersController : ControllerBase
                 p.Year,
                 p.Files.Count,
                 p.UploadedAt))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(papers);
     }
@@ -259,7 +254,8 @@ public class PapersController : ControllerBase
     [Authorize]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<ActionResult<IEnumerable<SubmissionStatusDto>>> GetMySubmissions(
+    public async Task<ActionResult<PagedResult<SubmissionStatusDto>>> GetMySubmissions(
+        [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
     {
         var userId = User.GetUserId();
@@ -285,7 +281,7 @@ public class PapersController : ControllerBase
                 p.Status,
                 p.ReviewedAt,
                 p.RejectionReason))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(submissions);
     }
