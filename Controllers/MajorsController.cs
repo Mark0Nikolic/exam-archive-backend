@@ -1,5 +1,6 @@
 using ExamArchive.Data;
 using ExamArchive.Dtos;
+using ExamArchive.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,10 +22,19 @@ public class MajorsController : ControllerBase
     /// Lists majors, optionally narrowed to a single study level.
     /// </summary>
     /// <param name="studiesId">Study level to filter by. Omit to list every major.</param>
+    /// <param name="paging">Which page to return. See <see cref="PageRequest"/>.</param>
+    /// <remarks>
+    /// Paged like every other listing, though a faculty has a few dozen majors and
+    /// this one could have returned them all. The point is that a client parses one
+    /// response shape everywhere rather than remembering which endpoints wrap their
+    /// rows — and a caller filling a dropdown can still ask for
+    /// <c>perPage=100</c> and be done in one request.
+    /// </remarks>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<MajorDto>>> GetMajors(
+    public async Task<ActionResult<PagedResult<MajorDto>>> GetMajors(
         [FromQuery] int? studiesId,
+        [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
     {
         var query = _db.Majors.AsNoTracking();
@@ -40,10 +50,13 @@ public class MajorsController : ControllerBase
         //
         // Projecting in the query means EF selects only these columns and never
         // materialises an entity graph, so there is nothing to serialise circularly.
+        //
+        // Id is unique, so ordering by it alone is already a total order and needs
+        // no tiebreaker to page safely.
         var majors = await query
             .OrderBy(m => m.Id)
             .Select(m => new MajorDto(m.Id, m.NameSr, m.NameEn, m.StudiesId))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(majors);
     }
