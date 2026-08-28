@@ -96,7 +96,7 @@ public class ExamArchiveDbContext : DbContext
                 // this the column accepts year 47 or -3 as readily as year 2.
                 t.HasCheckConstraint(
                     "CK_MajorSubject_YearOfStudy",
-                    "[YearOfStudy] >= 1 AND [YearOfStudy] <= 6");
+                    "`YearOfStudy` >= 1 AND `YearOfStudy` <= 6");
             });
         });
 
@@ -178,15 +178,15 @@ public class ExamArchiveDbContext : DbContext
             {
                 t.HasCheckConstraint(
                     "CK_Paper_Month",
-                    "[Month] >= 1 AND [Month] <= 12");
+                    "`Month` >= 1 AND `Month` <= 12");
 
                 t.HasCheckConstraint(
                     "CK_Paper_ExamType",
-                    "[ExamType] IN ('Midterm', 'Final', 'Resit')");
+                    "`ExamType` IN ('Midterm', 'Final', 'Resit')");
 
                 t.HasCheckConstraint(
                     "CK_Paper_Status",
-                    "[Status] IN ('Pending', 'Approved', 'Rejected')");
+                    "`Status` IN ('Pending', 'Approved', 'Rejected')");
 
                 // One-directional on purpose. It forbids a reason on a paper that
                 // is not rejected — which would contradict the status — but does
@@ -196,12 +196,12 @@ public class ExamArchiveDbContext : DbContext
                 // reason by the API instead.
                 t.HasCheckConstraint(
                     "CK_Paper_RejectionReason",
-                    "[Status] = 'Rejected' OR [RejectionReason] IS NULL");
+                    "`Status` = 'Rejected' OR `RejectionReason` IS NULL");
 
                 // Likewise: a paper still waiting cannot have been reviewed.
                 t.HasCheckConstraint(
                     "CK_Paper_ReviewedAt",
-                    "[Status] <> 'Pending' OR [ReviewedAt] IS NULL");
+                    "`Status` <> 'Pending' OR `ReviewedAt` IS NULL");
             });
         });
 
@@ -240,11 +240,11 @@ public class ExamArchiveDbContext : DbContext
 
                 t.HasCheckConstraint(
                     "CK_PaperFile_ContentType",
-                    $"[ContentType] IN ({contentTypes})");
+                    $"`ContentType` IN ({contentTypes})");
 
                 t.HasCheckConstraint(
                     "CK_PaperFile_PageNumber",
-                    "[PageNumber] >= 1");
+                    "`PageNumber` >= 1");
 
                 // Zero is permitted and means "size not recorded" — rows migrated
                 // from the single-FilePath schema predate size tracking, and SQL
@@ -252,21 +252,32 @@ public class ExamArchiveDbContext : DbContext
                 // write a real size, so only historical rows carry 0.
                 t.HasCheckConstraint(
                     "CK_PaperFile_SizeBytes",
-                    "[SizeBytes] >= 0");
+                    "`SizeBytes` >= 0");
             });
         });
 
         modelBuilder.Entity<User>(entity =>
         {
-            // NOCASE makes both the comparison and the unique index below
+            // A _ci collation makes both the comparison and the unique index below
             // case-insensitive, so "Marko" and "marko" cannot coexist as separate
             // accounts and either spelling finds the same row at login. The
             // alternative — a second NormalizedUsername column kept in sync by the
             // application — is one more thing to forget to update.
+            //
+            // Named explicitly rather than left to the server default, so the column
+            // does not silently change meaning on a server configured with a
+            // different one. It is spelled out as MySQL 8.0's own default because a
+            // column whose collation differs from the ones it is compared against
+            // raises "illegal mix of collations" rather than simply comparing.
+            //
+            // This is also accent-insensitive, which SQLite's NOCASE was not: "márko"
+            // now collides with "marko". For a login name that is a fair trade, since
+            // two accounts separated only by an accent are more likely impersonation
+            // than intent.
             entity.Property(u => u.Username)
                 .IsRequired()
                 .HasMaxLength(50)
-                .UseCollation("NOCASE");
+                .UseCollation("utf8mb4_0900_ai_ci");
 
             entity.HasIndex(u => u.Username)
                 .IsUnique();
@@ -304,7 +315,7 @@ public class ExamArchiveDbContext : DbContext
                 // which is a confusing way to find a spelling mistake.
                 t.HasCheckConstraint(
                     "CK_User_Role",
-                    "[Role] IN ('Moderator', 'Admin')");
+                    "`Role` IN ('Moderator', 'Admin')");
             });
         });
     }
