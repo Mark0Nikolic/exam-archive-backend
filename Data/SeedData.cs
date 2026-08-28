@@ -62,14 +62,15 @@ public static class SeedData
     /// and never by this file.
     /// </para>
     /// <para>
-    /// Long enough to satisfy <see cref="Services.UserAccountService.MinimumPasswordLength"/>.
-    /// Nothing enforces that here — seeding writes a hash directly and never passes
-    /// through the change-password endpoint — but a sample account that violates the
-    /// application's own rule is a confusing thing to hand somebody, and it would
-    /// leave the seeded accounts unable to be used as an honest demonstration of it.
+    /// Deliberately shorter than <see cref="Services.UserAccountService.MinimumPasswordLength"/>,
+    /// which nothing here enforces: seeding writes a hash directly, and the minimum
+    /// is checked where a password is <em>set</em> through the API, never at sign-in.
+    /// Signing in with it therefore works. The cost is that these accounts cannot
+    /// double as a demonstration of the length rule, which is a fair trade for not
+    /// retyping a long password on every manual test.
     /// </para>
     /// </remarks>
-    private const string DevPassword = "Lozinka!12345";
+    private const string DevPassword = "password";
 
     /// <summary>
     /// The accounts created on a development database — one per role, since there
@@ -79,7 +80,15 @@ public static class SeedData
     [
         ("admin", UserRole.Admin),
         ("moderator", UserRole.Moderator),
+
+        // Several students rather than one, because a list of submissions with a
+        // single author on every row cannot show whether a client is reading the
+        // author at all. Given names rather than student1/student2 for the same
+        // reason: they are told apart at a glance in a rendered list.
         ("student", UserRole.User),
+        ("milica", UserRole.User),
+        ("stefan", UserRole.User),
+        ("jovana", UserRole.User),
     ];
 
     public static async Task SeedAsync(
@@ -385,36 +394,55 @@ public static class SeedData
         UserAccountService accounts,
         ILogger logger)
     {
+        var usernames = DevAccounts.Select(account => account.Username).ToList();
+
+        // Matched by the column's case-insensitive collation, so this finds the row
+        // created as "admin" when the list says "Admin" rather than missing it and
+        // then colliding on the unique index.
         var existing = await db.Users
-            .Select(u => u.Username)
+            .Where(u => usernames.Contains(u.Username))
             .ToListAsync();
 
-        var missing = DevAccounts
-            .Where(account => !existing.Contains(account.Username, StringComparer.OrdinalIgnoreCase))
-            .ToList();
+        var created = new List<string>();
+        var reset = new List<string>();
 
-        if (missing.Count == 0)
+        foreach (var (username, role) in DevAccounts)
         {
-            return;
-        }
+            var user = existing.FirstOrDefault(
+                u => string.Equals(u.Username, username, StringComparison.OrdinalIgnoreCase));
 
-        foreach (var (username, role) in missing)
-        {
-            var user = new User
+            if (user is null)
             {
-                Username = username,
-                Role = role,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow
-            };
+                user = new User { Username = username, CreatedAt = DateTime.UtcNow };
+                db.Users.Add(user);
+                created.Add($"{username} ({role})");
+            }
+            else
+            {
+                reset.Add(username);
+            }
+
+            // Rewritten every start, not only on creation, which is what makes
+            // DevPassword above authoritative: changing the constant changes the
+            // password of accounts that already exist, instead of applying only to
+            // whichever ones happen to be missing. The same goes for the three
+            // fields below — a seeded account deactivated or left mid-password-change
+            // by an afternoon of manual testing is restored to a known state on the
+            // next run rather than staying broken.
+            //
+            // The trade is that a password deliberately changed on one of these
+            // accounts does not survive a restart. That is the right way round for
+            // fixtures, and anything needing a durable password should be a real
+            // account rather than a seeded one.
+            user.Role = role;
+            user.IsActive = true;
+            user.MustChangePassword = false;
 
             // Hashed against the user object, which is how PasswordHasher's
             // interface is shaped — it ignores the instance for the default
             // algorithm, but passing the real one keeps this correct if it ever
             // stops ignoring it.
             user.PasswordHash = accounts.HashPassword(user, DevPassword);
-
-            db.Users.Add(user);
         }
 
         await db.SaveChangesAsync();
@@ -425,10 +453,11 @@ public static class SeedData
         // Development — if this ever appears on a deployed instance, something is
         // configured wrong and accounts with known passwords now exist.
         logger.LogWarning(
-            "Created development accounts {Accounts}, all with the password '{Password}'. "
-            + "These exist only in the Development environment.",
-            string.Join(", ", missing.Select(account => $"{account.Username} ({account.Role})")),
-            DevPassword);
+            "Development accounts ready with the password '{Password}' — created: {Created}; "
+            + "reset: {Reset}. These exist only in the Development environment.",
+            DevPassword,
+            created.Count > 0 ? string.Join(", ", created) : "none",
+            reset.Count > 0 ? string.Join(", ", reset) : "none");
     }
 
     /// <summary>
