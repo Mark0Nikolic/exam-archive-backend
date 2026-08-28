@@ -173,6 +173,10 @@ public class AdminUsersController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
+        // Spans the last-admin check and the write it guards. Returning early rolls
+        // back, which is why the conflict paths below simply return.
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
         if (user is null)
@@ -187,6 +191,7 @@ public class AdminUsersController : ControllerBase
 
         user.IsActive = false;
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         _logger.LogWarning(
             "{Admin} deactivated {Username}.", User.Identity?.Name, user.Username);
@@ -245,6 +250,10 @@ public class AdminUsersController : ControllerBase
         [FromBody] ChangeRoleRequest request,
         CancellationToken cancellationToken)
     {
+        // Same reasoning as Deactivate: the check and the write it guards belong to
+        // one transaction.
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
         if (user is null)
@@ -266,6 +275,7 @@ public class AdminUsersController : ControllerBase
         var previous = user.Role;
         user.Role = request.Role;
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         _logger.LogWarning(
             "{Admin} changed {Username} from {Previous} to {Role}.",
@@ -283,12 +293,11 @@ public class AdminUsersController : ControllerBase
     /// out permanently, recoverable only through the bootstrap environment variables
     /// and a restart.
     /// <para>
-    /// Reading the count and then acting on it is a race in general — two admins
-    /// demoting each other at once would each see two and each proceed. It is safe
-    /// here because SQLite permits one writer at a time, so the second request
-    /// cannot begin until the first has committed. That is the database saving us
-    /// rather than the code, and on a server that allows concurrent writers this
-    /// would need the count and the update inside one locking transaction.
+    /// Reading the count and then acting on it would be a race — two admins demoting
+    /// each other at once would each see the other and each proceed, leaving none.
+    /// The read therefore locks the rows it counts and shares a transaction with the
+    /// write, so the second request waits for the first to commit and then sees the
+    /// world it actually created.
     /// </para>
     /// </remarks>
     private async Task<bool> WouldRemoveLastAdminAsync(User user, CancellationToken cancellationToken)
@@ -298,12 +307,23 @@ public class AdminUsersController : ControllerBase
             return false;
         }
 
-        var otherActiveAdmins = await _db.Users
-            .CountAsync(
-                u => u.Role == UserRole.Admin && u.IsActive && u.Id != user.Id,
-                cancellationToken);
+        // FOR UPDATE, so the rows this decision rests on cannot change between the
+        // read and the write that follows it. Both must be inside one transaction
+        // for that to hold, which is why every caller opens one.
+        //
+        // Every active admin is locked, not just the others, and always in the same
+        // order. Locking only the others would have two admins demoting each other
+        // take each other's row and deadlock; locking the whole set in a fixed order
+        // makes the second request wait, then re-read a world where the first has
+        // already committed and correctly refuse.
+        //
+        // Counted in memory rather than by the database because COUNT(*) over a
+        // locking read is not portable, and this set is only ever a handful of rows.
+        var activeAdmins = await _db.Users
+            .FromSql($"SELECT * FROM Users WHERE Role = 'Admin' AND IsActive = TRUE ORDER BY Id FOR UPDATE")
+            .ToListAsync(cancellationToken);
 
-        return otherActiveAdmins == 0;
+        return activeAdmins.TrueForAll(admin => admin.Id == user.Id);
     }
 
     private ObjectResult LastAdminConflict(string action) =>
