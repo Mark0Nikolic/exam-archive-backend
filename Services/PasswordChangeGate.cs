@@ -69,7 +69,7 @@ public static class PasswordChangeGate
                 {
                   "title": "Password change required",
                   "status": 403,
-                  "detail": "This account is using a password issued by an administrator. Change it at /api/auth/change-password before continuing."
+                  "detail": "This account is using a password issued by an administrator. Change it at /api/change-password before continuing."
                 }
                 """);
         });

@@ -29,7 +29,7 @@ namespace ExamArchive.Controllers;
 /// </para>
 /// </remarks>
 [ApiController]
-[Route("api/auth")]
+[Route("api")]
 [Produces("application/json")]
 public class AuthController : ControllerBase
 {

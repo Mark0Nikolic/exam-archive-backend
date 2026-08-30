@@ -12,16 +12,26 @@ namespace ExamArchive.Dtos;
 /// can be seen twice or missed. For an archive that gains a few papers a week
 /// that is a fair trade; for a feed it would not be.
 /// <para>
+/// The query parameters are named for the keys they come back as — <c>page</c>
+/// and <c>perPage</c> — so a client can send back what it was handed without
+/// translating between two names for one number.
+/// </para>
+/// <para>
 /// Out-of-range values are clamped rather than rejected, and the response repeats
 /// the values actually used. Rejecting would be defensible, but a 400 for
-/// <c>pageSize=1000</c> teaches a client nothing it cannot learn from being handed
+/// <c>perPage=1000</c> teaches a client nothing it cannot learn from being handed
 /// 100 and told so.
 /// </para>
 /// </remarks>
 public sealed class PageRequest
 {
     /// <summary>Rows per page when the client does not say.</summary>
-    public const int DefaultPageSize = 20;
+    /// <remarks>
+    /// Small enough that the common case — somebody opening a listing and reading
+    /// the first screen — costs one short query, and a client that wants more only
+    /// has to ask.
+    /// </remarks>
+    public const int DefaultPerPage = 10;
 
     /// <summary>
     /// The most rows one request can return.
@@ -30,11 +40,11 @@ public sealed class PageRequest
     /// The reason pagination is here at all: without a ceiling, a listing returns
     /// the whole table and gets slower every week the archive grows.
     /// </remarks>
-    public const int MaxPageSize = 100;
+    public const int MaxPerPage = 100;
 
     /// <summary>Which page, counting from one — the number a reader sees.</summary>
     public int Page { get; set; } = 1;
 
-    /// <summary>How many rows to return, capped at <see cref="MaxPageSize"/>.</summary>
-    public int PageSize { get; set; } = DefaultPageSize;
+    /// <summary>How many rows to return, capped at <see cref="MaxPerPage"/>.</summary>
+    public int PerPage { get; set; } = DefaultPerPage;
 }

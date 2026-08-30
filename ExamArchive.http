@@ -10,7 +10,7 @@
 ### Everything under "Moderation" below returns 401 until one of these has run.
 
 ### Sign in as a moderator — unlocks the moderation section
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Sign in as an admin — same powers today, plus the configuration work to come
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -28,7 +28,7 @@ Content-Type: application/json
 }
 
 ### Wrong password — same message as an unknown username, on purpose
-POST {{ExamArchive_HostAddress}}/api/auth/login
+POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
 {
@@ -38,13 +38,13 @@ Content-Type: application/json
 
 ### Who am I? 401 when not signed in — the cookie is HttpOnly, so this is the
 ### only way a frontend can find out.
-GET {{ExamArchive_HostAddress}}/api/auth/me
+GET {{ExamArchive_HostAddress}}/api/me
 Accept: application/json
 
 ### Change your own password. Requires the current one — a session cookie proves
 ### the browser signed in once, not that the person at the keyboard owns the
 ### account. Minimum 12 characters for the new one.
-POST {{ExamArchive_HostAddress}}/api/auth/change-password
+POST {{ExamArchive_HostAddress}}/api/change-password
 Content-Type: application/json
 
 {
@@ -54,7 +54,7 @@ Content-Type: application/json
 
 ### Same password back again — refused, so a change that did nothing is not
 ### mistaken for one that worked
-POST {{ExamArchive_HostAddress}}/api/auth/change-password
+POST {{ExamArchive_HostAddress}}/api/change-password
 Content-Type: application/json
 
 {
@@ -63,7 +63,7 @@ Content-Type: application/json
 }
 
 ### Sign out
-POST {{ExamArchive_HostAddress}}/api/auth/logout
+POST {{ExamArchive_HostAddress}}/api/logout
 
 ### ==================== Browsing (anonymous) ====================
 
@@ -97,6 +97,36 @@ Accept: application/json
 
 ### Linear Algebra (id 2) — taught in two majors, but the archive is empty
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=2
+Accept: application/json
+
+### ==================== Pagination ====================
+### Every listing answers with {"data": [...], "meta": {page, perPage, totalItems,
+### totalPages}} — the rows alone never say whether there are more. Ten per page
+### unless asked otherwise, and 100 is the ceiling.
+###
+### The two knobs are `page` and `perPage`, named for the keys they come back as,
+### so a client can send back what it was handed.
+
+### Second page of the whole archive, five at a time
+GET {{ExamArchive_HostAddress}}/api/papers?page=2&perPage=5
+Accept: application/json
+
+### Over the ceiling — served 100, and meta.perPage says so rather than a 400
+GET {{ExamArchive_HostAddress}}/api/papers?perPage=1000
+Accept: application/json
+
+### Past the end — an empty data array with honest totals, not a 404, so a client
+### holding a stale page number can see it has overshot and step back
+GET {{ExamArchive_HostAddress}}/api/papers?page=999
+Accept: application/json
+
+### Nonsense values are clamped, not rejected: page 0 is page 1
+GET {{ExamArchive_HostAddress}}/api/papers?page=0&perPage=0
+Accept: application/json
+
+### Reference lists are paged too — ask for a full page to fill a dropdown in one
+### request rather than looping
+GET {{ExamArchive_HostAddress}}/api/majors?perPage=100
 Accept: application/json
 
 ### Pages of an approved paper

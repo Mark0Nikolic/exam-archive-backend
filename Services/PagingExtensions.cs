@@ -7,9 +7,9 @@ namespace ExamArchive.Services;
 /// Turns a query into one page of results.
 /// </summary>
 /// <remarks>
-/// Shared so that every listing clamps, counts and skips identically. Four
-/// endpoints each doing their own arithmetic is four chances for one of them to
-/// be off by a page.
+/// Shared so that every listing clamps, counts and skips identically. Six
+/// endpoints each doing their own arithmetic is six chances for one of them to be
+/// off by a page.
 /// </remarks>
 public static class PagingExtensions
 {
@@ -32,14 +32,15 @@ public static class PagingExtensions
         PageRequest request,
         CancellationToken cancellationToken)
     {
-        var pageSize = Math.Clamp(request.PageSize, 1, PageRequest.MaxPageSize);
+        // Clamped here rather than at the edge, so the guarantee holds for every
+        // caller: PageMeta is never handed a per-page of zero to divide by, and the
+        // skip below is never negative.
+        var perPage = Math.Clamp(request.PerPage, 1, PageRequest.MaxPerPage);
         var page = Math.Max(request.Page, 1);
 
-        var totalCount = await query.CountAsync(cancellationToken);
+        var totalItems = await query.CountAsync(cancellationToken);
 
-        var totalPages = totalCount == 0
-            ? 0
-            : (int)Math.Ceiling(totalCount / (double)pageSize);
+        var meta = new PageMeta(page, perPage, totalItems);
 
         // Past the end is an empty page carrying honest totals, not a 404: a client
         // holding a stale page number after rows were deleted should be able to see
@@ -47,13 +48,13 @@ public static class PagingExtensions
         //
         // Skipping this branch also keeps the multiplication below in range, which
         // it would not be for a page number near int.MaxValue.
-        var items = page > totalPages
+        var data = page > meta.TotalPages
             ? []
             : await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
+                .Skip((page - 1) * perPage)
+                .Take(perPage)
                 .ToListAsync(cancellationToken);
 
-        return new PagedResult<T>(items, page, pageSize, totalCount);
+        return new PagedResult<T>(data, meta);
     }
 }
