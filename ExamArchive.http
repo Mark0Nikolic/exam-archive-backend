@@ -4,12 +4,13 @@
 @ExamArchive_HostAddress = https://localhost:7294
 
 ### ==================== Sign in ====================
-### Only staff have accounts. Students never sign in — uploading is anonymous and
-### browsing is public. Both accounts exist only in Development and are created by
-### SeedData; the password is printed as a warning at startup.
-### Everything under "Moderation" below returns 401 until one of these has run.
+### Browsing is public; uploading takes any account; reviewing takes a staff one.
+### The staff accounts below exist only in Development and are created by SeedData;
+### the password is printed as a warning at startup.
+### Everything under "Review" below returns 401 until one of these has run — and
+### 401 as well for an ordinary account, which cannot tell the two apart on purpose.
 
-### Sign in as a moderator — unlocks the moderation section
+### Sign in as a moderator — unlocks the review section
 POST {{ExamArchive_HostAddress}}/api/login
 Content-Type: application/json
 
@@ -67,6 +68,11 @@ POST {{ExamArchive_HostAddress}}/api/logout
 
 ### ==================== Browsing (anonymous) ====================
 
+### Every level of study — the top of the hierarchy, and the first dropdown in a
+### search. Takes no filter: there is nothing above it to narrow it by.
+GET {{ExamArchive_HostAddress}}/api/studies
+Accept: application/json
+
 ### Majors in Bachelor's
 GET {{ExamArchive_HostAddress}}/api/majors?studiesId=1
 Accept: application/json
@@ -99,6 +105,77 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=2
 Accept: application/json
 
+### ==================== Searching (anonymous) ====================
+### The search form is a cascade — Degree, then Major, then Year of study, then
+### Subject, each one filling the next. Every step is a request holding the id the
+### step before it returned:
+###
+###   /api/studies                       -> Bachelor's (1)
+###   /api/majors?studiesId=1            -> Computer Science (1)
+###   /api/subjects?majorId=1            -> the curriculum, every row carrying its
+###                                         year, so the Year and Subject dropdowns
+###                                         come out of this one response
+###   /api/papers?...                    -> the papers
+###
+### Only subjectId narrows the papers: a paper belongs to a subject and to nothing
+### else. studiesId, majorId and yearOfStudy come along because the subject cannot
+### remember them — Databases is taught in three majors, in two different years —
+### so a reloaded page has nothing to rebuild its dropdowns from without them.
+### They are verified rather than used, which is what makes them worth trusting.
+
+### The whole cascade: Bachelor's > Computer Science > 2nd year > Databases
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=1&majorId=1&yearOfStudy=2&subjectId=5
+Accept: application/json
+
+### The same subject reached through Software Engineering, where it lands a year
+### later — a different path, the same papers
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=1&majorId=2&yearOfStudy=3&subjectId=5
+Accept: application/json
+
+### Optional narrowing, once the subject is chosen: exam type, year, month. These
+### are the only parameters after subjectId that change what comes back.
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=1&majorId=1&yearOfStudy=2&subjectId=5&examType=Final
+Accept: application/json
+
+### Nothing matches — an empty page with honest totals, not a 404. The search was
+### valid, the archive simply has no such paper, and the client can loosen one
+### filter rather than start the cascade again.
+GET {{ExamArchive_HostAddress}}/api/papers?subjectId=5&examType=Resit&year=2023
+Accept: application/json
+
+### ---- Paths that contradict themselves — 400, not a silently wrong answer ----
+
+### Right subject, wrong year: Databases is 2nd year in Computer Science, not 3rd.
+### The error names the real year, so a stale bookmark can be repaired rather than
+### only reported broken.
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=1&majorId=1&yearOfStudy=3&subjectId=5
+Accept: application/json
+
+### Electrical Engineering (id 3) does not teach Databases at all
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=1&majorId=3&subjectId=5
+Accept: application/json
+
+### Computer Science is a Bachelor's major, so it is not in Master's (id 2)
+GET {{ExamArchive_HostAddress}}/api/papers?studiesId=2&majorId=1&subjectId=5
+Accept: application/json
+
+### A path with nothing to describe — refused rather than quietly handing back the
+### whole archive, which would look like it had worked
+GET {{ExamArchive_HostAddress}}/api/papers?majorId=1
+Accept: application/json
+
+### Year of study without a major: the same subject sits in different years in
+### different majors, so there is no row this could be checked against
+GET {{ExamArchive_HostAddress}}/api/papers?yearOfStudy=2&subjectId=5
+Accept: application/json
+
+### ---- Subjects, filtered server-side ----
+### The search form will not usually need this — it asks for the whole curriculum
+### once and filters in the browser, so the Year and Subject dropdowns respond
+### without a round trip. Here for a caller that would rather ask.
+GET {{ExamArchive_HostAddress}}/api/subjects?majorId=1&yearOfStudy=2
+Accept: application/json
+
 ### ==================== Pagination ====================
 ### Every listing answers with {"data": [...], "meta": {page, perPage, totalItems,
 ### totalPages}} — the rows alone never say whether there are more. Ten per page
@@ -129,15 +206,15 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/majors?perPage=100
 Accept: application/json
 
-### Pages of an approved paper
-GET {{ExamArchive_HostAddress}}/api/papers/1/files
+### One paper with its pages. The pages arrive grouped by format under "files" —
+### {"pdf": [...], "jpg": [...]} — with one array per format the paper actually
+### has, so a missing key and an empty array mean the same thing.
+###
+### NOTE: nothing serves the file bytes any more. /api/papers/{id}/files and
+### /api/papers/{id}/files/{pageNumber} were both removed, and this response
+### describes the pages without handing any of them over.
+GET {{ExamArchive_HostAddress}}/api/papers/1
 Accept: application/json
-
-### One page, opened in the browser
-GET {{ExamArchive_HostAddress}}/api/papers/1/files/1
-
-### The same page, forced to download
-GET {{ExamArchive_HostAddress}}/api/papers/1/files/1?download=true
 
 ### Check on an anonymous submission using the claim code from the upload response.
 ### Replace the code below with the "claimToken" the upload actually returned —
@@ -186,44 +263,66 @@ POST {{ExamArchive_HostAddress}}/api/users/3/deactivate
 ### Somebody came back. The password is untouched.
 POST {{ExamArchive_HostAddress}}/api/users/3/activate
 
-### ==================== Moderation (Moderator or Admin) ====================
-### 401 with no session. 403 would mean a signed-in account without the role,
-### which cannot happen while Moderator and Admin are the only two.
+### ==================== Review (Moderator or Admin) ====================
+### These are the same /api/papers routes as above — there is no separate
+### moderation prefix any more. What changes is the role on the session cookie:
+### anything below returns 401 without a staff sign-in, whether the caller is
+### anonymous or signed in as an ordinary user. Sign in as moderator or admin first.
 
-### The review queue, longest-waiting first
-GET {{ExamArchive_HostAddress}}/api/moderation/papers
+### The review queue, longest-waiting first. ?status= is the whole difference
+### between browsing the archive and working the queue; a non-staff caller asking
+### for anything but Approved gets 401.
+GET {{ExamArchive_HostAddress}}/api/papers?status=Pending
 Accept: application/json
 
-### Papers already rejected
-GET {{ExamArchive_HostAddress}}/api/moderation/papers?status=Rejected
+### Papers already rejected, with the reason each was turned down for
+GET {{ExamArchive_HostAddress}}/api/papers?status=Rejected
 Accept: application/json
 
-### Pages of a submitted paper — answers for pending papers, unlike the browse API
-GET {{ExamArchive_HostAddress}}/api/moderation/papers/28/files
+### One pending paper. The same route the public uses — it 404s for them and
+### answers for staff.
+GET {{ExamArchive_HostAddress}}/api/papers/28
 Accept: application/json
 
-### Preview a submission in the browser, no download step
-GET {{ExamArchive_HostAddress}}/api/moderation/papers/28/files/1
+### A reviewer can see what a submission is made of — page count, formats, sizes —
+### but not open any of it, now that the byte-serving route is gone.
 
-### Approve a paper — it becomes visible through the browse API
-POST {{ExamArchive_HostAddress}}/api/moderation/papers/28/approve
+### Approve a paper — it becomes visible to everyone, signed in or not
+POST {{ExamArchive_HostAddress}}/api/papers/28/approve
 
 ### Reject a paper. The reason is required and shown to the submitter.
-POST {{ExamArchive_HostAddress}}/api/moderation/papers/29/reject
+POST {{ExamArchive_HostAddress}}/api/papers/29/reject
 Content-Type: application/json
 
 {
   "reason": "Page 2 is upside down and unreadable. Please re-photograph it."
 }
 
-### Rejected papers, with the reason each was turned down for
-GET {{ExamArchive_HostAddress}}/api/moderation/papers?status=Rejected
-Accept: application/json
+### Correct a paper's filing details rather than rejecting a perfectly good scan
+PUT {{ExamArchive_HostAddress}}/api/papers/28
+Content-Type: application/json
+
+{
+  "subjectId": 5,
+  "examType": "Final",
+  "month": 6,
+  "year": 2024
+}
+
+### Delete a paper and its files. Administrator only — a moderator gets 401 here
+### even though every other route in this section answers for them.
+DELETE {{ExamArchive_HostAddress}}/api/papers/28
 
 ### Staff upload — published immediately, skips the queue.
-### The most dangerous endpoint here: it writes to the public archive with no
-### review. Sign in as moderator or admin above first, or this returns 401.
-POST {{ExamArchive_HostAddress}}/api/moderation/papers/upload
+### The same /api/papers/upload an ordinary account posts to; the role on the
+### cookie is what decides whether the paper lands Approved or Pending. The most
+### dangerous endpoint here: for staff it writes to the public archive with no review.
+###
+### Limits, whoever is uploading: at most 10 pages, 20 MB per file, 100 MB in total,
+### and formats .pdf .jpg .jpeg .png .webp confirmed against the bytes, not the name.
+### Formats may be mixed freely — a scanned PDF alongside photographed pages is one
+### paper — with the single extra rule that at most 2 of the 10 may be PDFs.
+POST {{ExamArchive_HostAddress}}/api/papers/upload
 Content-Type: multipart/form-data; boundary=----Boundary
 
 ------Boundary

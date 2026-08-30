@@ -22,14 +22,20 @@ public class UploadPaperRequest
     [MinLength(1, ErrorMessage = "At least one file is required.")]
     // Constant interpolation only folds string constants, so the count is spelled
     // out in the message and kept in step with MaxFiles by hand.
-    [MaxLength(MaxFiles, ErrorMessage = "A paper cannot have more than 30 pages.")]
+    [MaxLength(MaxFiles, ErrorMessage = "A paper cannot have more than 10 pages.")]
     public List<IFormFile> Files { get; set; } = [];
 
     /// <summary>
-    /// Upper bound on pages in one submission. Generous for a real exam, low
-    /// enough that a single request cannot tie up the server indefinitely.
+    /// Upper bound on pages in one submission. Enough for a real exam, low enough
+    /// that a single request cannot tie up the server indefinitely.
     /// </summary>
-    public const int MaxFiles = 30;
+    /// <remarks>
+    /// The ceiling for the submission as a whole, whatever the files are. Formats may
+    /// be mixed, and the only additional restriction is
+    /// <see cref="Services.PaperSubmissionService.MaxPdfFiles"/>, which caps how many
+    /// of them may be PDFs.
+    /// </remarks>
+    public const int MaxFiles = 10;
 
     /// <summary>The subject the paper belongs to. Must already exist.</summary>
     [Range(1, int.MaxValue, ErrorMessage = "SubjectId must be a positive id.")]

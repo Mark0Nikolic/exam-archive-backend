@@ -71,6 +71,24 @@ public sealed class PaperSubmissionService
     /// </summary>
     public const long MaxTotalUploadBytes = 100 * 1024 * 1024;
 
+    /// <summary>
+    /// How many PDFs one submission may carry.
+    /// </summary>
+    /// <remarks>
+    /// A sub-limit within <see cref="UploadPaperRequest.MaxFiles"/> rather than an
+    /// alternative to it: a submission may mix PDFs and images, and only the PDFs
+    /// among them are counted here.
+    /// <para>
+    /// Far below that limit because the two count different things. It counts pages,
+    /// and a photographed exam runs to several; a PDF is already a whole document, so
+    /// needing more than one means the paper arrived split — a question sheet and an
+    /// answer sheet scanned separately, say. Two covers that and stops there, because
+    /// a third is much more likely to be the submitter attaching the wrong file than a
+    /// paper in three parts.
+    /// </para>
+    /// </remarks>
+    public const int MaxPdfFiles = 2;
+
     /// <summary>Nothing in this archive predates the university's digital records.</summary>
     private const int MinYear = 1990;
 
@@ -324,15 +342,27 @@ public sealed class PaperSubmissionService
             valid = false;
         }
 
-        // A paper of mixed formats is almost certainly a mistake — a PDF is already
-        // the whole document, so pairing it with loose images means the submitter
-        // picked the wrong files.
-        if (valid && resolved.Any(t => t == PaperFileTypes.Pdf) && resolved.Length > 1)
+        // Only worth asking once every file has resolved to a format; until then
+        // some entries of `resolved` are still null and the count would be wrong.
+        //
+        // Formats may be mixed freely. A paper that arrived as a scanned question
+        // sheet alongside photographed answer pages is still one paper, and refusing
+        // it only sends the submitter away to merge the files by hand — which is the
+        // step most likely to produce the unreadable result a moderator then rejects.
+        if (valid)
         {
-            errors.Add(new PaperSubmissionError(
-                nameof(UploadPaperRequest.Files),
-                "A PDF must be submitted on its own. Upload either one PDF or a set of images."));
-            valid = false;
+            var pdfCount = resolved.Count(t => t == PaperFileTypes.Pdf);
+
+            if (pdfCount > MaxPdfFiles)
+            {
+                // The page limit does not catch this on its own: ten PDFs is under it
+                // and is still not one exam paper.
+                errors.Add(new PaperSubmissionError(
+                    nameof(UploadPaperRequest.Files),
+                    $"A submission may contain at most {MaxPdfFiles} PDFs, "
+                        + $"and this one has {pdfCount}."));
+                valid = false;
+            }
         }
 
         return valid ? resolved : null;

@@ -96,9 +96,26 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             return Task.CompletedTask;
         };
 
+        // A signed-in caller who fails a role policy is answered 401, the same as one
+        // who is not signed in at all. That is not what 401 means — the caller is
+        // authenticated, and 403 is the honest code — and it is chosen anyway because
+        // 403 is an oracle: a student who probes /api/papers/28/approve and reads 403
+        // has learned the route exists and that some other account may use it, which
+        // is exactly the shape of the staff surface. One answer for both cases tells
+        // them nothing they did not already know.
+        //
+        // The cost is that a frontend cannot tell "sign in" from "not for you" by
+        // status alone, so it must not treat every 401 as an expired session — for a
+        // moderation route the signed-in student would loop through a login that
+        // succeeds and changes nothing.
+        //
+        // This covers policy failures only: the staff and administrator actions on
+        // PapersController, and the whole of AdminUsersController. A 403 raised
+        // anywhere else is deliberate and still means what it says: see
+        // PasswordChangeGate, which writes its own and explains why it stays a 403.
         options.Events.OnRedirectToAccessDenied = context =>
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return Task.CompletedTask;
         };
     });

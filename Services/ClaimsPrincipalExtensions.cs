@@ -53,4 +53,25 @@ public static class ClaimsPrincipalExtensions
             ? (UserRole)number
             : null;
     }
+
+    /// <summary>
+    /// Whether this caller works the review queue, and so may see papers that have
+    /// not been approved.
+    /// </summary>
+    /// <remarks>
+    /// The visibility half of the authorization model, kept separate from the
+    /// policies that decide whether a request is allowed through at all. Once
+    /// browsing and reviewing became one set of routes, "may this caller act" stopped
+    /// being the only question — <see cref="PapersController"/> also has to ask "what
+    /// does this caller get to see", inside actions that anonymous users reach.
+    /// A policy cannot answer that: it decides a request, not a query.
+    /// <para>
+    /// It defers to <see cref="RolePolicies.IsStaff"/> rather than listing the roles
+    /// again, so this and the Staff policy cannot drift into disagreeing about who
+    /// staff are — which would show up as a moderator allowed through a route and
+    /// then shown the public view of it.
+    /// </para>
+    /// </remarks>
+    public static bool IsStaff(this ClaimsPrincipal principal) =>
+        principal.GetRole() is { } role && RolePolicies.IsStaff(role);
 }

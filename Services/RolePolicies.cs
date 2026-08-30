@@ -33,13 +33,11 @@ public static class RolePolicies
     /// <summary>Registers every policy named above.</summary>
     public static void AddRolePolicies(this AuthorizationOptions options)
     {
-        options.AddPolicy(SuperAdministrators, Require(UserRole.SuperAdmin));
+        options.AddPolicy(SuperAdministrators, Require(role => role is UserRole.SuperAdmin));
 
-        options.AddPolicy(Administrators, Require(UserRole.SuperAdmin, UserRole.Admin));
+        options.AddPolicy(Administrators, Require(IsAdministrative));
 
-        options.AddPolicy(
-            Staff,
-            Require(UserRole.SuperAdmin, UserRole.Admin, UserRole.Moderator));
+        options.AddPolicy(Staff, Require(IsStaff));
     }
 
     /// <summary>
@@ -49,13 +47,30 @@ public static class RolePolicies
     public static bool IsAdministrative(UserRole role) =>
         role is UserRole.SuperAdmin or UserRole.Admin;
 
-    private static Action<AuthorizationPolicyBuilder> Require(params UserRole[] roles) =>
+    /// <summary>
+    /// Whether <paramref name="role"/> works the review queue.
+    /// </summary>
+    /// <remarks>
+    /// Public, and the policy above is built from it rather than from its own list of
+    /// roles, because authorization is no longer the only thing that needs this
+    /// answer: since browsing and reviewing became one set of routes,
+    /// <see cref="ClaimsPrincipalExtensions.IsStaff"/> asks it again to decide what a
+    /// caller may see inside an action the policy never gated. Two lists would
+    /// eventually disagree, and the symptom — a role let through a route and then
+    /// shown the public view of it — reads like a bug anywhere but here.
+    /// </remarks>
+    public static bool IsStaff(UserRole role) =>
+        IsAdministrative(role) || role is UserRole.Moderator;
+
+    private static Action<AuthorizationPolicyBuilder> Require(Func<UserRole, bool> allows) =>
         policy => policy
 
             // Explicit, and it decides the status code: without it an anonymous
             // caller merely fails the assertion and is told 403, when the honest
-            // answer is 401 and "sign in".
+            // answer is 401 and "sign in". (Both are 401 to the client now — see
+            // OnRedirectToAccessDenied in Program.cs — but this is what makes the
+            // anonymous case a challenge rather than a denial internally.)
             .RequireAuthenticatedUser()
             .RequireAssertion(context =>
-                context.User.GetRole() is { } role && roles.Contains(role));
+                context.User.GetRole() is { } role && allows(role));
 }

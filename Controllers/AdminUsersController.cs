@@ -12,10 +12,11 @@ namespace ExamArchive.Controllers;
 /// Administrator management of staff accounts.
 /// </summary>
 /// <remarks>
-/// Separate from <see cref="ModerationController"/> because the roles that may
-/// reach them differ — a moderator judges papers, an administrator decides who may
-/// judge papers. One controller with mixed attributes would put that distinction in
-/// a place it is easy to get wrong.
+/// Separate from <see cref="PapersController"/> because the resources differ, not
+/// merely the roles: a moderator judges papers, an administrator decides who may
+/// judge papers. That controller mixes audiences over one resource and gates each
+/// action by role; this one is an administrator's throughout, so the policy sits on
+/// the class where nothing can forget it.
 /// <para>
 /// Accounts are never deleted here. Deactivation is reversible and keeps a
 /// moderator's past decisions attributable; deleting the row would strip their name
