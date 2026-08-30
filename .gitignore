@@ -42,3 +42,6 @@ Thumbs.db
 *.pfx
 *.key
 secrets.json
+
+# Git worktrees Claude Code creates. Never part of the repo.
+.claude/worktrees/
