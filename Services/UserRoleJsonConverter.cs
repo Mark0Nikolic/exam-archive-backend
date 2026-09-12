@@ -4,21 +4,9 @@ using ExamArchive.Models;
 
 namespace ExamArchive.Services;
 
-/// <summary>
-/// Reads and writes <see cref="UserRole"/> as its number.
-/// </summary>
-/// <remarks>
-/// Registered ahead of the global <c>JsonStringEnumConverter</c>, which would
-/// otherwise claim every enum and turn this one back into a name. The rest keep
-/// that treatment on purpose: a paper's status reads as "Pending" in a response
-/// and in the database, and only the role is numeric.
-/// <para>
-/// Reading refuses a JSON string outright rather than parsing it. Accepting both
-/// would mean the wire format is whatever a caller felt like sending, and the
-/// first client to send "Admin" would keep working right up until somebody
-/// renamed the member.
-/// </para>
-/// </remarks>
+// Reads and writes UserRole as its number. Registered ahead of the global
+// JsonStringEnumConverter, which would otherwise claim this enum too; the rest keep
+// that treatment on purpose.
 public sealed class UserRoleJsonConverter : JsonConverter<UserRole>
 {
     public override UserRole Read(
@@ -33,10 +21,9 @@ public sealed class UserRoleJsonConverter : JsonConverter<UserRole>
                 + "Role names are not accepted.");
         }
 
-        // Not validated against the defined members here. A number outside the enum
+        // Not validated against the defined members here: an out-of-range number
         // becomes an undefined UserRole, which the EnumDataType attribute on the
-        // request DTOs then rejects with a message naming the field — better than a
-        // deserialization failure that names only the request body.
+        // request DTOs then rejects with a message naming the field.
         return (UserRole)reader.GetInt32();
     }
 

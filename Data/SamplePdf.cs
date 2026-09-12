@@ -3,28 +3,17 @@ using System.Text;
 
 namespace ExamArchive.Data;
 
-/// <summary>
-/// Builds a small, valid, one-page PDF so that seeded papers have real bytes
-/// behind them rather than a row pointing at nothing.
-/// </summary>
-/// <remarks>
-/// Written by hand rather than pulled from a PDF library, because the whole
-/// requirement is "a file a browser will open" and that is roughly six hundred
-/// bytes of well-understood syntax. A dependency carried into production to
-/// generate development placeholders would be a poor trade.
-/// <para>
-/// The text is deliberately ASCII: the page uses Helvetica with WinAnsiEncoding,
-/// which has no Cyrillic, so it is labelled with the subject <em>code</em> rather
-/// than the name. That is the one identifying field that reads the same in every
-/// language anyway.
-/// </para>
-/// </remarks>
+// Builds a small, valid, one-page PDF so seeded papers have real bytes behind them.
+// Written by hand rather than pulled from a PDF library — the requirement is "a file
+// a browser will open", and a production dependency for development placeholders
+// would be a poor trade.
+//
+// The text is ASCII because the page uses Helvetica with WinAnsiEncoding, which has
+// no Cyrillic, so pages are labelled with the subject code rather than the name.
 internal static class SamplePdf
 {
-    /// <summary>The encoding WinAnsiEncoding actually is, for the bytes written out.</summary>
     private static readonly Encoding WinAnsi = Encoding.Latin1;
 
-    /// <summary>Renders <paramref name="lines"/> onto a single A4 page.</summary>
     public static byte[] Render(IReadOnlyList<string> lines)
     {
         var content = BuildContentStream(lines);
@@ -52,8 +41,8 @@ internal static class SamplePdf
 
         Write("%PDF-1.4\n");
 
-        // Recorded as each object is written, because the cross-reference table
-        // below is a list of byte offsets and there is no way to know them up front.
+        // Recorded as each object is written, because the cross-reference table below
+        // is a list of byte offsets.
         var offsets = new long[objects.Length];
 
         for (var i = 0; i < objects.Length; i++)
@@ -80,7 +69,6 @@ internal static class SamplePdf
         return pdf.ToArray();
     }
 
-    /// <summary>Lays the lines out top-down from a fixed origin.</summary>
     private static string BuildContentStream(IReadOnlyList<string> lines)
     {
         var content = new StringBuilder("BT\n/F1 18 Tf\n72 760 Td\n");
@@ -100,10 +88,6 @@ internal static class SamplePdf
         return content.Append("ET").ToString();
     }
 
-    /// <summary>
-    /// Escapes the three characters that would otherwise end the string literal or
-    /// the escape sequence itself.
-    /// </summary>
     private static string Escape(string text) => text
         .Replace(@"\", @"\\")
         .Replace("(", @"\(")

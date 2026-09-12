@@ -6,8 +6,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
-  <!-- Debug builds are local development. Without this, launching the built
-       executable directly defaults to Production and skips appsettings.Development.json. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <EnvironmentName>Development</EnvironmentName>
   </PropertyGroup>
@@ -19,8 +17,15 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="MySql.EntityFrameworkCore" Version="10.0.9" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.0" />
+    <!-- Held at 3.x: ImageSharp 4's build-time license check fails Release builds. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+  <!-- Publish copies every appsettings.*.json beside the project; this one carries the
+       local database password and would also flip a deployed build into Development. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
 </Project>

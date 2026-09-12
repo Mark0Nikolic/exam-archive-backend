@@ -1,33 +1,19 @@
 namespace ExamArchive.Models;
 
-/// <summary>
-/// A course/subject. The same subject can be taught in several majors,
-/// potentially in a different year of study for each.
-/// </summary>
+// A course/subject. The same subject can be taught in several majors, potentially
+// in a different year of study for each.
 public class Subject
 {
     public int Id { get; set; }
 
-    /// <summary>
-    /// The university's course code, e.g. "IT230". Unique where present.
-    /// </summary>
-    /// <remarks>
-    /// Nullable because the archive can be populated before every code is known,
-    /// and inventing one would put fiction in the database. Names alone are not
-    /// dependable identifiers — two majors can each teach a different course
-    /// called "Основе програмирања" — so the code is what disambiguates them and
-    /// what students actually search by.
-    /// <para>
-    /// It is also the only name-like field that is the same in every language,
-    /// which is why stored file paths are built from it.
-    /// </para>
-    /// </remarks>
+    // The university's course code, e.g. "IT230". Unique where present, nullable
+    // because the archive can be populated before every code is known. It is the
+    // only name-like field that is the same in every language, which is why stored
+    // file paths are built from it.
     public string? Code { get; set; }
 
-    /// <summary>The name in Serbian Cyrillic. Required — see <see cref="Studies.NameSr"/>.</summary>
     public string NameSr { get; set; } = string.Empty;
 
-    /// <summary>The English name, or null if not supplied.</summary>
     public string? NameEn { get; set; }
 
     // Majors are reached through the join entity, which carries YearOfStudy.

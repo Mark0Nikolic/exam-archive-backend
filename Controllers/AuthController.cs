@@ -11,23 +11,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Controllers;
 
-/// <summary>
-/// Signing in and out, and reporting who the caller is.
-/// </summary>
-/// <remarks>
-/// Sessions are cookies, not bearer tokens. The deciding property is that a cookie
-/// marked HttpOnly cannot be read by JavaScript, so a cross-site scripting flaw
-/// anywhere in the frontend cannot walk off with a moderator's session — and this
-/// application serves unreviewed, submitter-supplied files, which is a larger XSS
-/// surface than most. A JWT held in localStorage is readable by any script on the
-/// page by design.
-/// <para>
-/// The cost is that cookies are attached by the browser automatically, which is
-/// what CSRF exploits; that is handled by the SameSite attribute set in Program.cs
-/// and by the fact that every state-changing endpoint is a POST that will not
-/// accept a form content type.
-/// </para>
-/// </remarks>
+// Sessions are cookies, not bearer tokens: an HttpOnly cookie cannot be read by
+// JavaScript, so an XSS flaw in the frontend cannot walk off with a moderator's
+// session — and this application serves unreviewed, submitter-supplied files. The
+// cost is CSRF, handled by the SameSite attribute set in Program.cs.
 [ApiController]
 [Route("api")]
 [Produces("application/json")]
@@ -47,25 +34,8 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Creates an account and signs it straight in.
-    /// </summary>
-    /// <remarks>
-    /// Submitting used to be anonymous, which meant an open endpoint accepted spam
-    /// and misleading files as readily as exam papers and left a moderator to sort
-    /// them by hand. An account is the cheapest thing that makes a pattern of bad
-    /// submissions answerable: it does not prove who anybody is, but it gives
-    /// repeated abuse a single thing to deactivate.
-    /// <para>
-    /// The role is fixed here rather than taken from the request. Registration is
-    /// the one account-creating path with no administrator behind it, so the caller
-    /// naming their own role is the difference between an archive and a free-for-all.
-    /// </para>
-    /// <para>
-    /// Signed in on success, because requiring a separate login immediately after
-    /// choosing a password is a step that exists only to be annoying.
-    /// </para>
-    /// </remarks>
+    // The role is fixed here rather than taken from the request: registration is the
+    // one account-creating path with no administrator behind it.
     [HttpPost("register")]
     [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status201Created)]
@@ -77,10 +47,9 @@ public class AuthController : ControllerBase
     {
         var username = request.Username.Trim();
 
-        // Checked for a usable message rather than for correctness — the unique
-        // index is what actually guarantees it, and the catch below is what turns
-        // the losing side of a race into a 409 instead of a 500. This endpoint is
-        // reachable by anyone, so that race is worth handling rather than noting.
+        // Checked for a usable message rather than for correctness — the unique index
+        // is what guarantees it, and the catch below turns the losing side of a race
+        // into a 409 instead of a 500.
         var taken = await _db.Users
             .AnyAsync(u => u.Username == username, cancellationToken);
 
@@ -112,8 +81,7 @@ public class AuthController : ControllerBase
         catch (DbUpdateException)
         {
             // The only unique constraint on this table is the username, so this is
-            // the other half of the race above: someone claimed the name between
-            // the check and the insert.
+            // the other half of the race above.
             return UsernameTaken(username);
         }
 
@@ -136,13 +104,8 @@ public class AuthController : ControllerBase
                 + "compared without regard to case.",
             statusCode: StatusCodes.Status409Conflict);
 
-    /// <summary>
-    /// Signs in and issues the session cookie.
-    /// </summary>
-    /// <remarks>
-    /// A frontend must send this with credentials included, and every later request
-    /// too, or the browser will hold the cookie and never present it.
-    /// </remarks>
+    // A frontend must send this with credentials included, and every later request
+    // too, or the browser will hold the cookie and never present it.
     [HttpPost("login")]
     [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -157,9 +120,8 @@ public class AuthController : ControllerBase
 
         if (user is null)
         {
-            // One message for every failure. "No such user" and "wrong password"
-            // are different facts, and telling them apart is how an attacker builds
-            // a list of real accounts before spending any effort on passwords.
+            // One message for every failure: telling "no such user" from "wrong
+            // password" is how an attacker builds a list of real accounts.
             _logger.LogInformation(
                 "Failed sign-in attempt for {Username}.", request.Username);
 
@@ -174,10 +136,8 @@ public class AuthController : ControllerBase
             UserAccountService.BuildPrincipal(user),
             new AuthenticationProperties
             {
-                // Survives closing the browser. A moderator working through a queue
-                // over several days should not have to sign in each morning, and the
-                // sliding expiration configured on the handler ends the session on
-                // inactivity rather than on a fixed clock.
+                // Survives closing the browser; the sliding expiration on the handler
+                // ends the session on inactivity rather than on a fixed clock.
                 IsPersistent = true
             });
 
@@ -187,14 +147,8 @@ public class AuthController : ControllerBase
         return Ok(new CurrentUserDto(user.Id, user.Username, user.Role));
     }
 
-    /// <summary>
-    /// Signs out, clearing the session cookie.
-    /// </summary>
-    /// <remarks>
-    /// Anonymous rather than [Authorize] on purpose: signing out a session that has
-    /// already expired should quietly succeed, not answer 401 and leave a frontend
-    /// deciding what to do about a failure that does not matter.
-    /// </remarks>
+    // Anonymous rather than [Authorize] on purpose: signing out a session that has
+    // already expired should quietly succeed.
     [HttpPost("logout")]
     [AllowAnonymous]
     [AllowsPendingPasswordChange]
@@ -206,21 +160,9 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>
-    /// Changes the signed-in account's own password.
-    /// </summary>
-    /// <remarks>
-    /// Self-service, and the only way a password changes without an administrator
-    /// involved. It is what makes an admin-issued temporary password temporary:
-    /// without this, a password the admin chose stays in use forever and the admin
-    /// can sign in as that person indefinitely.
-    /// <para>
-    /// Nobody can change anybody else's password here — the account is taken from
-    /// the session cookie, not from the request body. An admin resetting somebody
-    /// else's is a different operation on a different controller, and keeping them
-    /// apart means this endpoint has no privilege to escalate.
-    /// </para>
-    /// </remarks>
+    // The account is taken from the session cookie, not from the request body, so
+    // nobody can change anybody else's password here. An admin resetting somebody
+    // else's is a different operation on a different controller.
     [HttpPost("change-password")]
     [Authorize]
     [AllowsPendingPasswordChange]
@@ -246,9 +188,8 @@ public class AuthController : ControllerBase
         {
             case UserAccountService.PasswordChangeResult.Changed:
                 // Re-issued because the cookie may carry the must-change claim, and
-                // the account no longer owes anything. Skipping this would leave
-                // them locked out of every endpoint by a claim describing a
-                // condition they have just fixed.
+                // the account no longer owes anything. Skipping this would leave them
+                // locked out by a claim describing a condition they just fixed.
                 var user = await _accounts.FindByIdAsync(id.Value, cancellationToken);
 
                 if (user is not null)
@@ -261,9 +202,8 @@ public class AuthController : ControllerBase
 
                 return NoContent();
 
-            // The cookie is valid but the account behind it is gone or switched off.
-            // Signing them out turns a confusing failure into the correct state:
-            // they are not signed in, and the next request says so.
+            // The cookie is valid but the account behind it is gone or switched off,
+            // so signing them out turns a confusing failure into the correct state.
             case UserAccountService.PasswordChangeResult.UserNotFound:
             case UserAccountService.PasswordChangeResult.AccountInactive:
                 await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -273,9 +213,8 @@ public class AuthController : ControllerBase
                     detail: "This account is no longer active. Sign in again.",
                     statusCode: StatusCodes.Status403Forbidden);
 
-            // Reported against the field so a form can mark the right box. Safe to
-            // be specific: the caller is authenticated and already knows whose
-            // account this is, so there is no existence to leak.
+            // Safe to be specific: the caller is authenticated and already knows
+            // whose account this is, so there is no existence to leak.
             case UserAccountService.PasswordChangeResult.IncorrectPassword:
                 ModelState.AddModelError(
                     nameof(request.CurrentPassword), "That is not your current password.");
@@ -297,13 +236,8 @@ public class AuthController : ControllerBase
         return ValidationProblem(ModelState);
     }
 
-    /// <summary>
-    /// Reports the signed-in account, or 401 if there is none.
-    /// </summary>
-    /// <remarks>
-    /// The cookie is HttpOnly, so a page that has just loaded cannot inspect it to
-    /// find out whether it holds a session. This is how it asks.
-    /// </remarks>
+    // The cookie is HttpOnly, so a page that has just loaded cannot inspect it to
+    // find out whether it holds a session. This is how it asks.
     [HttpGet("me")]
     [Authorize]
     [AllowsPendingPasswordChange]
@@ -314,12 +248,10 @@ public class AuthController : ControllerBase
         var id = User.GetUserId();
         var role = User.GetRole();
 
-        // [Authorize] only proves a principal exists, not that it carries the
-        // claims this application put there. A cookie issued by an older version of
-        // the sign-in code would satisfy it and still be missing one of these — or
-        // carry a role name where a number is now expected — so both are checked
-        // rather than dereferenced. Answering 401 tells the frontend to sign in
-        // again, which reissues a cookie in the current shape.
+        // [Authorize] only proves a principal exists, not that it carries the claims
+        // this application put there: a cookie issued by an older version of the
+        // sign-in code would satisfy it and still be missing one of these. Answering
+        // 401 tells the frontend to sign in again, reissuing a current cookie.
         if (id is null || role is null)
         {
             return Unauthorized();

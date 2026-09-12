@@ -14,17 +14,10 @@ namespace ExamArchive.Migrations
                 name: "CK_User_Role",
                 table: "Users");
 
-            // Not AlterColumn, which is what EF scaffolded here and which would ask
-            // MySQL to read 'Admin' as an integer. Under strict mode that aborts the
-            // migration; without it, every role in the table silently becomes zero.
-            // The values have to be translated before the type changes, so the
-            // column is rebuilt beside the old one and swapped in.
-            //
-            // The CASE is exhaustive because the constraint dropped above allowed
-            // only these three names. ELSE 0 is therefore unreachable, and is left
-            // failing the new constraint rather than guessing a role, because an
-            // account quietly given the wrong permissions is worse than a migration
-            // that stops.
+            // Not AlterColumn, which EF scaffolded here and which would ask MySQL to
+            // read 'Admin' as an integer — silently zeroing every role. The values
+            // are translated into a new column instead, and ELSE 0 is left failing
+            // the new constraint rather than guessing a role.
             migrationBuilder.Sql("ALTER TABLE `Users` ADD COLUMN `RoleNumber` int NOT NULL DEFAULT 0;");
 
             migrationBuilder.Sql(
@@ -51,10 +44,9 @@ namespace ExamArchive.Migrations
                 name: "CK_User_Role",
                 table: "Users");
 
-            // The same rebuild in reverse. Note that this cannot fully undo the
-            // change: SuperAdmin has no name in the constraint restored below, so
-            // rolling back a database that has one will fail on that constraint
-            // rather than silently demote them.
+            // Cannot fully undo the change: SuperAdmin has no name in the constraint
+            // restored below, so rolling back a database that has one fails there
+            // rather than silently demoting them.
             migrationBuilder.Sql("ALTER TABLE `Users` ADD COLUMN `RoleName` varchar(20) NOT NULL DEFAULT '';");
 
             migrationBuilder.Sql(
