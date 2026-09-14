@@ -1,6 +1,7 @@
 using ExamArchive.Data;
 using ExamArchive.Dtos;
 using ExamArchive.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,7 @@ namespace ExamArchive.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class StudiesController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -22,6 +24,7 @@ public class StudiesController : ControllerBase
     // this is where the browse chain has to start.
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<PagedResult<StudiesDto>>> GetStudies(
         [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)

@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using ExamArchive.Data;
 using ExamArchive.Dtos;
 using ExamArchive.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ namespace ExamArchive.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class SubjectsController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -25,6 +27,7 @@ public class SubjectsController : ControllerBase
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<PagedResult<SubjectDto>>> GetSubjects(
         [FromQuery, BindRequired] int majorId,
         [FromQuery, Range(1, 6, ErrorMessage = "YearOfStudy must be between 1 and 6.")]

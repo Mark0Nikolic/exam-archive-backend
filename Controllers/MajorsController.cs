@@ -1,6 +1,7 @@
 using ExamArchive.Data;
 using ExamArchive.Dtos;
 using ExamArchive.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,7 @@ namespace ExamArchive.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class MajorsController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -20,6 +22,7 @@ public class MajorsController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<PagedResult<MajorDto>>> GetMajors(
         [FromQuery] int? studiesId,
         [FromQuery] PageRequest paging,

@@ -14,4 +14,5 @@ public record PaperDto(
     DateTime UploadedAt,
     PaperStatus Status,
     DateTime? ReviewedAt,
-    string? RejectionReason);
+    string? RejectionReason,
+    bool IsOwnedByCurrentUser);

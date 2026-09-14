@@ -292,6 +292,7 @@ export interface Paper {
   status: PaperStatus;
   reviewedAt: string | null;
   rejectionReason: string | null;   // null unless rejected
+  isOwnedByCurrentUser: boolean;
 }
 
 /** Detail — GET /api/papers/{id}, and the body returned by approve / reject. */
@@ -341,13 +342,13 @@ one shared render function for "a paper's files", normalise at the boundary.
 
 ## 4. Who can do what
 
-| | anon | User (4) | Moderator (3) | Admin (2) | SuperAdmin (1) |
+| | not signed in | User (4) | Moderator (3) | Admin (2) | SuperAdmin (1) |
 | --- | :--: | :--: | :--: | :--: | :--: |
-| `GET /studies` `/majors` `/subjects` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `GET /papers` (approved) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `GET /papers?status=Pending\|Rejected` | 401 | 401 | ✅ | ✅ | ✅ |
-| `GET /papers/{id}` — approved | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `GET /papers/{id}` — pending/rejected | 404 | 404 | ✅ | ✅ | ✅ |
+| `GET /studies` `/majors` `/subjects` | 401 | ✅ | ✅ | ✅ | ✅ |
+| `GET /papers` — mixed authorized list | 401 | approved + own pending/rejected | all | all | all |
+| `GET /papers?status=...` | 401 | same ownership scope | all | all | all |
+| `GET /papers/{id}` — approved | 401 | ✅ | ✅ | ✅ | ✅ |
+| `GET /papers/{id}` — pending/rejected | 401 | 404 | ✅ | ✅ | ✅ |
 | `POST /papers/upload` | 401 | ✅ → Pending | ✅ → Approved | ✅ → Approved | ✅ → Approved |
 | `POST /papers/{id}/approve` `/reject` | 401 | 401 | ✅ | ✅ | ✅ |
 | `DELETE /papers/{id}` | 401 | 401 | **401** | ✅ | ✅ |
@@ -432,8 +433,13 @@ Call this once on app boot to hydrate your auth context.
 
 ### 6.1 `GET /api/papers`
 
-Anonymous for approved papers. The same endpoint is the **staff review queue** via
-`?status=`.
+Requires a session. The server first builds the set this caller may see:
+
+- Moderator, Admin and SuperAdmin: every paper.
+- User: every approved paper, plus only pending/rejected papers they uploaded.
+
+The optional `status` parameter filters that set afterwards. It never grants access
+to another user's pending or rejected paper.
 
 **Query parameters**
 
@@ -446,7 +452,7 @@ Anonymous for approved papers. The same endpoint is the **staff review queue** v
 | `examType` | `ExamType` | no | `Midterm` \| `Final` \| `Resit`, case-insensitive. |
 | `month` | int 1–12 | no | Month the exam was held. |
 | `year` | int | no | Calendar year of the exam. Unbounded — an unlikely year matches nothing rather than 400ing. |
-| `status` | `PaperStatus` | no | Defaults to `Approved`. **Anything else requires staff.** |
+| `status` | `PaperStatus` | no | Omit for the caller's mixed authorized list; supply one value to narrow that list. |
 | `page`, `perPage` | int | no | §2.1. |
 
 **Why `studiesId` / `majorId` / `yearOfStudy` exist if they don't filter**
@@ -475,10 +481,11 @@ Other cascade errors: `"SubjectId is required when studiesId, majorId or yearOfS
 `"Major 1 does not belong to studies 2."`,
 `"Subject 5 is not taught in major 3."`
 
-**Ordering** follows the status, not the caller:
+**Ordering** is applied before pagination:
 
-- `status=Pending` → **oldest upload first** (a work queue; nothing should rot at the bottom).
-- anything else → **newest exam first** (year desc, month desc, id desc).
+- Status groups: **Pending**, then **Rejected**, then **Approved**.
+- Pending: oldest upload first (`uploadedAt`, then `id` ascending).
+- Rejected and Approved: newest exam first (`year`, `month`, then `id` descending).
 
 **200**
 
@@ -497,16 +504,18 @@ Other cascade errors: `"SubjectId is required when studiesId, majorId or yearOfS
       "uploadedAt": "2025-11-26T10:00:00Z",
       "status": "Approved",
       "reviewedAt": "2025-11-28T10:00:00Z",
-      "rejectionReason": null
+      "rejectionReason": null,
+      "isOwnedByCurrentUser": false
     }
   ],
   "meta": { "page": 1, "perPage": 10, "totalItems": 16, "totalPages": 2 }
 }
 ```
 
-**401** — non-staff asked for `status=Pending` or `status=Rejected`. Refused rather
-than quietly forced back to `Approved`, so you never get a silently different answer
-than the one you asked for.
+`isOwnedByCurrentUser` is informative for defensive UI checks. It does not replace
+the server-side ownership filter.
+
+**401** — no valid login session.
 
 Examples:
 
@@ -514,7 +523,7 @@ Examples:
 GET /api/papers?subjectId=5
 GET /api/papers?studiesId=1&majorId=1&yearOfStudy=2&subjectId=5&examType=Final
 GET /api/papers?subjectId=5&year=2024&month=6
-GET /api/papers?status=Pending&perPage=25          ← the moderator queue
+GET /api/papers?status=Pending&perPage=25          ← global queue for staff, own queue for a User
 GET /api/papers?page=2&perPage=5
 ```
 
@@ -522,7 +531,7 @@ GET /api/papers?page=2&perPage=5
 
 ### 6.2 `GET /api/papers/{id}`
 
-Anonymous for approved papers; staff see any status.
+Requires a session. A User may open approved papers; staff may open any status.
 
 **200** — note `files` is grouped by format, and formats with no pages are absent:
 
@@ -754,7 +763,7 @@ The files stay on disk. Rejection is reversible: approving later restores the pa
 
 ## 7. Reference-data routes
 
-All three are anonymous and paged. They exist to drive the search cascade.
+All three require a session and are paged. They exist to drive the search cascade.
 
 ### 7.1 `GET /api/studies`
 

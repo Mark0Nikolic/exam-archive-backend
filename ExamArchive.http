@@ -4,7 +4,7 @@
 @ExamArchive_HostAddress = https://localhost:7294
 
 ### ==================== Sign in ====================
-### Browsing is public; uploading takes any account; reviewing takes a staff one.
+### Browsing, searching and uploading require an account; reviewing takes a staff one.
 ### The staff accounts below exist only in Development and are created by SeedData;
 ### the password is printed as a warning at startup.
 ### Everything under "Review" below returns 401 until one of these has run — and
@@ -66,7 +66,7 @@ Content-Type: application/json
 ### Sign out
 POST {{ExamArchive_HostAddress}}/api/logout
 
-### ==================== Browsing (anonymous) ====================
+### ==================== Browsing (signed in) ====================
 
 ### Every level of study — the top of the hierarchy, and the first dropdown in a
 ### search. Takes no filter: there is nothing above it to narrow it by.
@@ -93,11 +93,12 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/subjects?majorId=2
 Accept: application/json
 
-### Approved papers for Databases (id 5) — the Pending 2025 resit is filtered out
+### Authorized papers for Databases (id 5) — all approved rows plus this user's
+### own pending/rejected rows
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=5
 Accept: application/json
 
-### Approved papers for Data Structures (id 4) — the Rejected 2024 final is filtered out
+### Authorized papers for Data Structures (id 4)
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=4
 Accept: application/json
 
@@ -105,7 +106,7 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers?subjectId=2
 Accept: application/json
 
-### ==================== Searching (anonymous) ====================
+### ==================== Searching (signed in) ====================
 ### The search form is a cascade — Degree, then Major, then Year of study, then
 ### Subject, each one filling the next. Every step is a request holding the id the
 ### step before it returned:
@@ -184,7 +185,7 @@ Accept: application/json
 ### The two knobs are `page` and `perPage`, named for the keys they come back as,
 ### so a client can send back what it was handed.
 
-### Second page of the whole archive, five at a time
+### Second page of this caller's authorized paper set, five at a time
 GET {{ExamArchive_HostAddress}}/api/papers?page=2&perPage=5
 Accept: application/json
 
@@ -206,7 +207,7 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/majors?perPage=100
 Accept: application/json
 
-### One paper with its pages. The pages arrive grouped by format under "files" —
+### One approved paper with its pages. The pages arrive grouped by format under "files" —
 ### {"pdf": [...], "jpg": [...]} — with one array per format the paper actually
 ### has, so a missing key and an empty array mean the same thing.
 ###
@@ -216,7 +217,7 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers/1
 Accept: application/json
 
-### Check on an anonymous submission using the claim code from the upload response.
+### Check a submission without a login using the claim code from the upload response.
 ### Replace the code below with the "claimToken" the upload actually returned —
 ### these are random, so this exact one will 404.
 ### Case, dashes and O-for-0 are all forgiven, so it can be typed as written down.
@@ -266,12 +267,11 @@ POST {{ExamArchive_HostAddress}}/api/users/3/activate
 ### ==================== Review (Moderator or Admin) ====================
 ### These are the same /api/papers routes as above — there is no separate
 ### moderation prefix any more. What changes is the role on the session cookie:
-### anything below returns 401 without a staff sign-in, whether the caller is
-### anonymous or signed in as an ordinary user. Sign in as moderator or admin first.
+### approving/rejecting below returns 401 without a staff sign-in. Listing with a
+### status remains available to an ordinary user, but only for that user's own rows.
 
-### The review queue, longest-waiting first. ?status= is the whole difference
-### between browsing the archive and working the queue; a non-staff caller asking
-### for anything but Approved gets 401.
+### The review queue, longest-waiting first. Staff receive the global queue; an
+### ordinary user making this request receives only their own pending submissions.
 GET {{ExamArchive_HostAddress}}/api/papers?status=Pending
 Accept: application/json
 

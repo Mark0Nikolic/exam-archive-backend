@@ -17,9 +17,9 @@ namespace ExamArchive.Controllers;
 // without an explicit policy is reachable by any signed-in account. Every staff
 // action below names its policy.
 //
-// Visibility works the same way: ClaimsPrincipalExtensions.IsStaff decides whether
-// unapproved papers exist for this caller, and it is passed explicitly at each call
-// site rather than consulted deep inside a query.
+// Visibility is decided inside each read query from the caller's role, id and the
+// paper's owner. ClaimsPrincipalExtensions.IsStaff keeps the staff definition aligned
+// with the policies that protect moderation actions.
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
@@ -43,7 +43,9 @@ public class PapersController : ControllerBase
         _logger = logger;
     }
 
-    // Lists papers: the approved archive for everyone, or a review queue for staff.
+    // Lists every paper this caller is allowed to know about. Staff see the full
+    // archive; an ordinary account sees the approved archive plus its own pending
+    // and rejected submissions.
     //
     // The filter parameters do three different jobs. subjectId filters — a paper
     // belongs to a subject and nothing else. examType, month and year filter too, and
@@ -55,7 +57,6 @@ public class PapersController : ControllerBase
     // sent and not used is why they are verified rather than ignored — a
     // contradiction is a 400, see ValidateCascadeAsync.
     [HttpGet]
-    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -73,13 +74,13 @@ public class PapersController : ControllerBase
         int? month,
         [FromQuery] int? year,
         [FromQuery] PageRequest paging,
-        [FromQuery] PaperStatus status = PaperStatus.Approved,
+        [FromQuery] PaperStatus? status,
         CancellationToken cancellationToken = default)
     {
-        // 401 rather than 403, and rather than quietly forcing the value back to
-        // Approved: the code matches the one the role gates use, so a client cannot
-        // learn from the status whether a queue exists to be refused.
-        if (status != PaperStatus.Approved && !User.IsStaff())
+        // [Authorize] proves there is a principal, not that a cookie issued by an
+        // older version carries the id this ownership boundary needs.
+        var userId = User.GetUserId();
+        if (userId is null)
         {
             return Unauthorized();
         }
@@ -90,9 +91,24 @@ public class PapersController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        var query = _db.Papers
-            .AsNoTracking()
-            .Where(p => p.Status == status);
+        var currentUserId = userId.Value;
+        var query = _db.Papers.AsNoTracking();
+
+        // Authorization is the first paper predicate. A later status filter can only
+        // narrow this set, never turn a student's request into the global queue.
+        if (!User.IsStaff())
+        {
+            query = query.Where(p =>
+                p.Status == PaperStatus.Approved
+                || (p.SubmittedByUserId == currentUserId
+                    && (p.Status == PaperStatus.Pending
+                        || p.Status == PaperStatus.Rejected)));
+        }
+
+        if (status is not null)
+        {
+            query = query.Where(p => p.Status == status.Value);
+        }
 
         if (subjectId is not null)
         {
@@ -119,18 +135,50 @@ public class PapersController : ControllerBase
             query = query.Where(p => p.Month == month);
         }
 
-        // A queue is worked oldest-first so nothing rots at the bottom; the archive
-        // is browsed newest-exam-first.
-        var ordered = status == PaperStatus.Pending
-            ? query.OrderBy(p => p.UploadedAt).ThenBy(p => p.Id)
-            : query
+        // Keep the simple single-status orders when a filter was supplied. Without a
+        // status, CASE expressions group the mixed result before each group's own
+        // order is applied: pending work first, then rejected, then approved.
+        IOrderedQueryable<Paper> ordered;
+
+        if (status == PaperStatus.Pending)
+        {
+            // A queue is worked oldest-first so nothing rots at the bottom.
+            ordered = query
+                .OrderBy(p => p.UploadedAt)
+                .ThenBy(p => p.Id);
+        }
+        else if (status is PaperStatus.Rejected or PaperStatus.Approved)
+        {
+            // Decided papers retain the existing newest-exam-first order.
+            ordered = query
                 .OrderByDescending(p => p.Year)
                 .ThenByDescending(p => p.Month)
-
-                // Id last so the order is total, which paging depends on: without it
-                // two papers sat in the same month are tie-broken however the server
-                // feels on the day.
                 .ThenByDescending(p => p.Id);
+        }
+        else
+        {
+            ordered = query
+                .OrderBy(p => p.Status == PaperStatus.Pending
+                    ? 0
+                    : p.Status == PaperStatus.Rejected
+                        ? 1
+                        : 2)
+                .ThenBy(p => p.Status == PaperStatus.Pending
+                    ? p.UploadedAt
+                    : (DateTime?)null)
+                .ThenBy(p => p.Status == PaperStatus.Pending
+                    ? p.Id
+                    : (int?)null)
+                .ThenByDescending(p => p.Status != PaperStatus.Pending
+                    ? p.Year
+                    : (int?)null)
+                .ThenByDescending(p => p.Status != PaperStatus.Pending
+                    ? p.Month
+                    : (int?)null)
+                .ThenByDescending(p => p.Status != PaperStatus.Pending
+                    ? p.Id
+                    : (int?)null);
+        }
 
         var papers = await ordered
             .Select(p => new PaperDto(
@@ -145,7 +193,8 @@ public class PapersController : ControllerBase
                 p.UploadedAt,
                 p.Status,
                 p.ReviewedAt,
-                p.RejectionReason))
+                p.RejectionReason,
+                p.SubmittedByUserId == currentUserId))
             .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(papers);
@@ -245,12 +294,12 @@ public class PapersController : ControllerBase
         return true;
     }
 
-    // For a caller who is not staff, an unapproved paper is 404 rather than 403:
-    // telling the two apart would let anyone probe ids to learn that a pending paper
-    // exists.
+    // Listing an owned submission does not grant access to its unreviewed contents.
+    // For a caller who is not staff, an unapproved paper — including their own — is
+    // 404 rather than 403, so other paper ids cannot be probed for queue membership.
     [HttpGet("{id:int}")]
-    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PaperDetailDto>> GetPaper(
         int id,
@@ -317,9 +366,9 @@ public class PapersController : ControllerBase
             UploadedPaperDto.From(result.Paper));
     }
 
-    // Pending and rejected papers appear here for callers who may not list them
-    // anywhere else. Not a leak of the review queue: the filter is the caller's own
-    // id.
+    // Kept as a dedicated submission-history endpoint for existing clients even
+    // though the main list now includes a caller's own pending and rejected rows.
+    // Not a leak of the review queue: the filter is still the caller's own id.
     [HttpGet("mine")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
