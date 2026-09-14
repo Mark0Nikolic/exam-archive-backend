@@ -8,24 +8,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Controllers;
 
-/// <summary>
-/// Administrator management of staff accounts.
-/// </summary>
-/// <remarks>
-/// Separate from <see cref="ModerationController"/> because the roles that may
-/// reach them differ — a moderator judges papers, an administrator decides who may
-/// judge papers. One controller with mixed attributes would put that distinction in
-/// a place it is easy to get wrong.
-/// <para>
-/// Accounts are never deleted here. Deactivation is reversible and keeps a
-/// moderator's past decisions attributable; deleting the row would strip their name
-/// off everything they ever approved.
-/// </para>
-/// </remarks>
+// Administrator management of staff accounts. Every action here is an
+// administrator's, so the policy sits on the class where nothing can forget it.
+//
+// Accounts are never deleted: deactivation is reversible and keeps a moderator's
+// past decisions attributable.
 [ApiController]
-[Route("api/admin/users")]
+[Route("api/users")]
 [Produces("application/json")]
-[Authorize(Roles = nameof(UserRole.Admin))]
+[Authorize(Policy = RolePolicies.Administrators)]
 public class AdminUsersController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -42,35 +33,28 @@ public class AdminUsersController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>Lists every staff account, active or not.</summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<UserSummaryDto>>> GetUsers(
+    public async Task<ActionResult<PagedResult<UserSummaryDto>>> GetUsers(
+        [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
     {
         // Deactivated accounts are included: they are the ones an admin is most
-        // likely to be looking for, either to reinstate somebody or to check that a
-        // departure was actually processed.
+        // likely to be looking for. Username is unique, so ordering by it alone is
+        // already the total order paging needs.
         var users = await _db.Users
             .AsNoTracking()
             .OrderBy(u => u.Username)
             .Select(u => new UserSummaryDto(
                 u.Id, u.Username, u.Role, u.IsActive, u.MustChangePassword, u.CreatedAt))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(users);
     }
 
-    /// <summary>
-    /// Creates a staff account and returns the password to hand over.
-    /// </summary>
-    /// <remarks>
-    /// The password is generated, never chosen by the admin, and the account must
-    /// replace it before it can do anything. So the admin knows the password only
-    /// for as long as it takes the owner to sign in once — after which nobody but
-    /// the owner does, and a decision in the moderation log genuinely belongs to the
-    /// person named on it.
-    /// </remarks>
+    // The password is generated, never chosen by the admin, and the account must
+    // replace it before it can do anything — so the admin knows it only until the
+    // owner signs in once.
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -79,11 +63,16 @@ public class AdminUsersController : ControllerBase
         [FromBody] CreateUserRequest request,
         CancellationToken cancellationToken)
     {
+        if (RequireSuperAdminFor(request.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var username = request.Username.Trim();
 
         // Checked here for a decent error message; the unique index is what actually
-        // guarantees it. Doing only this check would leave a race, and doing only
-        // the index would surface as a 500.
+        // guarantees it. Only this check would leave a race, only the index would
+        // surface as a 500.
         var taken = await _db.Users
             .AnyAsync(u => u.Username == username, cancellationToken);
 
@@ -121,22 +110,12 @@ public class AdminUsersController : ControllerBase
             new UserCredentialDto(user.Id, user.Username, user.Role, temporaryPassword));
     }
 
-    /// <summary>
-    /// Issues a new temporary password, for somebody who has forgotten theirs.
-    /// </summary>
-    /// <remarks>
-    /// This is the whole of password recovery, and it replaces a "forgot password"
-    /// flow on purpose. That flow would need an email address per moderator, a mail
-    /// server, and a token mechanism — and it would make the university mailbox the
-    /// real credential for the archive. Here the admin verifies identity by
-    /// recognising a colleague, which for a dozen people in one building is stronger
-    /// than a link in an inbox.
-    /// <para>
-    /// KNOWN LIMITATION: a session already signed in under the old password stays
-    /// valid until it expires. Resetting the password of an account that has been
-    /// compromised does not yet evict whoever compromised it.
-    /// </para>
-    /// </remarks>
+    // The whole of password recovery, replacing a "forgot password" flow on purpose:
+    // that would need an email address per moderator and would make the university
+    // mailbox the real credential for the archive.
+    //
+    // KNOWN LIMITATION: a session already signed in under the old password stays
+    // valid until it expires.
     [HttpPost("{id:int}/reset-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -149,6 +128,13 @@ public class AdminUsersController : ControllerBase
         if (user is null)
         {
             return NotFound();
+        }
+
+        // An issued password is one the issuer knows until it is replaced, so
+        // resetting an administrator's is indistinguishable from taking their account.
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
         }
 
         var temporaryPassword = UserAccountService.GenerateTemporaryPassword();
@@ -164,7 +150,6 @@ public class AdminUsersController : ControllerBase
         return Ok(new UserCredentialDto(user.Id, user.Username, user.Role, temporaryPassword));
     }
 
-    /// <summary>Revokes an account's ability to sign in, reversibly.</summary>
     [HttpPost("{id:int}/deactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -173,11 +158,20 @@ public class AdminUsersController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
+        // Spans the last-admin check and the write it guards. Returning early rolls
+        // back, which is why the conflict paths below simply return.
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
         if (user is null)
         {
             return NotFound();
+        }
+
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
         }
 
         if (user.IsActive && await WouldRemoveLastAdminAsync(user, cancellationToken))
@@ -187,6 +181,7 @@ public class AdminUsersController : ControllerBase
 
         user.IsActive = false;
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         _logger.LogWarning(
             "{Admin} deactivated {Username}.", User.Identity?.Name, user.Username);
@@ -194,13 +189,8 @@ public class AdminUsersController : ControllerBase
         return Ok(Summarize(user));
     }
 
-    /// <summary>Restores a deactivated account.</summary>
-    /// <remarks>
-    /// The password is untouched, so somebody returning from leave signs in with
-    /// what they had. If they have forgotten it, reset it separately — reactivation
-    /// and recovery are different events and rolling them together would issue a new
-    /// password to people who did not need one.
-    /// </remarks>
+    // The password is untouched, so somebody returning from leave signs in with what
+    // they had. Reactivation and recovery are different events.
     [HttpPost("{id:int}/activate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -215,6 +205,13 @@ public class AdminUsersController : ControllerBase
             return NotFound();
         }
 
+        // Symmetrical with deactivation: an admin who could not switch a colleague
+        // off must not be able to switch one back on either.
+        if (RequireSuperAdminFor(user.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         user.IsActive = true;
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -224,18 +221,8 @@ public class AdminUsersController : ControllerBase
         return Ok(Summarize(user));
     }
 
-    /// <summary>
-    /// Promotes a moderator to administrator, or demotes one.
-    /// </summary>
-    /// <remarks>
-    /// Promotion is how the archive stops depending on a single administrator, which
-    /// is worth doing early: with only one, a forgotten password means recovering
-    /// through the bootstrap variables and a restart.
-    /// <para>
-    /// A role change does not reach a cookie that has already been issued, so a
-    /// promotion takes effect at the user's next sign-in.
-    /// </para>
-    /// </remarks>
+    // A role change does not reach a cookie that has already been issued, so a
+    // promotion takes effect at the user's next sign-in.
     [HttpPost("{id:int}/role")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -245,6 +232,10 @@ public class AdminUsersController : ControllerBase
         [FromBody] ChangeRoleRequest request,
         CancellationToken cancellationToken)
     {
+        // Same reasoning as Deactivate: the check and the write it guards belong to
+        // one transaction.
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
         if (user is null)
@@ -257,7 +248,14 @@ public class AdminUsersController : ControllerBase
             return Ok(Summarize(user));
         }
 
-        if (request.Role != UserRole.Admin
+        // Both ends: promoting into the tier and demoting out of it are equally the
+        // super administrator's call.
+        if (RequireSuperAdminFor(user.Role, request.Role) is { } forbidden)
+        {
+            return forbidden;
+        }
+
+        if (!RolePolicies.IsAdministrative(request.Role)
             && await WouldRemoveLastAdminAsync(user, cancellationToken))
         {
             return LastAdminConflict("demoted");
@@ -266,6 +264,7 @@ public class AdminUsersController : ControllerBase
         var previous = user.Role;
         user.Role = request.Role;
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         _logger.LogWarning(
             "{Admin} changed {Username} from {Previous} to {Role}.",
@@ -274,36 +273,55 @@ public class AdminUsersController : ControllerBase
         return Ok(Summarize(user));
     }
 
-    /// <summary>
-    /// Whether removing this account's administrator access would leave none.
-    /// </summary>
-    /// <remarks>
-    /// The invariant this protects is that somebody can always manage the system. An
-    /// admin who demotes themselves while nobody else holds the role locks everyone
-    /// out permanently, recoverable only through the bootstrap environment variables
-    /// and a restart.
-    /// <para>
-    /// Reading the count and then acting on it is a race in general — two admins
-    /// demoting each other at once would each see two and each proceed. It is safe
-    /// here because SQLite permits one writer at a time, so the second request
-    /// cannot begin until the first has committed. That is the database saving us
-    /// rather than the code, and on a server that allows concurrent writers this
-    /// would need the count and the update inside one locking transaction.
-    /// </para>
-    /// </remarks>
+    // Protects the invariant that somebody can always manage the system: an admin who
+    // demotes themselves while nobody else holds the role locks everyone out, and
+    // recovery is then the bootstrap environment variables and a restart.
     private async Task<bool> WouldRemoveLastAdminAsync(User user, CancellationToken cancellationToken)
     {
-        if (user.Role != UserRole.Admin || !user.IsActive)
+        if (!RolePolicies.IsAdministrative(user.Role) || !user.IsActive)
         {
             return false;
         }
 
-        var otherActiveAdmins = await _db.Users
-            .CountAsync(
-                u => u.Role == UserRole.Admin && u.IsActive && u.Id != user.Id,
-                cancellationToken);
+        // FOR UPDATE, so the rows this decision rests on cannot change between the
+        // read and the write that follows. Both must be inside one transaction for
+        // that to hold, which is why every caller opens one.
+        //
+        // Both administrative roles count: the invariant is that somebody can still
+        // manage accounts, not that a particular role survives.
+        //
+        // Every active administrator is locked, not just the others, and always in
+        // the same order — locking only the others would let two admins demoting each
+        // other deadlock.
+        //
+        // Counted in memory because COUNT(*) over a locking read is not portable, and
+        // this set is only ever a handful of rows.
+        var activeAdmins = await _db.Users
+            .FromSql($"SELECT * FROM Users WHERE Role IN (1, 2) AND IsActive = TRUE ORDER BY Id FOR UPDATE")
+            .ToListAsync(cancellationToken);
 
-        return otherActiveAdmins == 0;
+        return activeAdmins.TrueForAll(admin => admin.Id == user.Id);
+    }
+
+    // The whole reason SuperAdmin exists: without it any administrator can create,
+    // demote, deactivate or take over the password of any other, so the tier has no
+    // owner. Applied to both ends of a role change.
+    //
+    // 403 rather than 404: the caller is a legitimate administrator who reached a
+    // real account.
+    private ObjectResult? RequireSuperAdminFor(params UserRole[] roles)
+    {
+        if (!roles.Any(RolePolicies.IsAdministrative)
+            || User.GetRole() == UserRole.SuperAdmin)
+        {
+            return null;
+        }
+
+        return Problem(
+            title: "Super administrator required",
+            detail: "Only a super administrator may create, promote, demote, "
+                + "deactivate or reset the password of an administrator.",
+            statusCode: StatusCodes.Status403Forbidden);
     }
 
     private ObjectResult LastAdminConflict(string action) =>

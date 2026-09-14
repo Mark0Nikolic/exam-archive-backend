@@ -5,12 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Services;
 
-/// <summary>A rejected field on a submission, ready to be turned into a 400.</summary>
 public sealed record PaperSubmissionError(string Field, string Message);
 
-/// <summary>
-/// Outcome of a submission: the saved paper, or the reasons it was refused.
-/// </summary>
 public sealed class PaperSubmissionResult
 {
     private PaperSubmissionResult(
@@ -25,14 +21,8 @@ public sealed class PaperSubmissionResult
 
     public Paper? Paper { get; }
 
-    /// <summary>
-    /// The claim code issued to an anonymous submitter, or null for a staff upload.
-    /// </summary>
-    /// <remarks>
-    /// Carried on the result rather than on the paper because the paper stores only
-    /// the hash. This is the single moment the code exists in readable form, and if
-    /// the caller does not return it to the submitter it is gone.
-    /// </remarks>
+    // Carried on the result rather than on the paper, which stores only the hash.
+    // This is the single moment the code exists in readable form.
     public string? ClaimToken { get; }
 
     public IReadOnlyList<PaperSubmissionError> Errors { get; }
@@ -46,32 +36,22 @@ public sealed class PaperSubmissionResult
         new(null, null, errors);
 }
 
-/// <summary>
-/// Validates a submitted paper, writes its pages to disk, and saves the row.
-/// </summary>
-/// <remarks>
-/// Lives outside the controllers because two of them submit papers now: the
-/// public endpoint, where a submission waits for review, and the staff endpoint,
-/// where it is published immediately. Only the resulting status differs, so
-/// duplicating any of this would mean two copies of the file-format checks and
-/// the cleanup-on-failure path.
-/// <para>
-/// Errors are returned rather than written to ModelState, because ModelState
-/// belongs to a controller and this has to serve both.
-/// </para>
-/// </remarks>
+// Validates a submitted paper, writes its pages to disk, and saves the row. Outside
+// the controllers because two of them submit papers — the public endpoint queues,
+// the staff endpoint publishes — and only the resulting status differs.
+//
+// Errors are returned rather than written to ModelState, which belongs to a
+// controller.
 public sealed class PaperSubmissionService
 {
-    /// <summary>Per-page cap. A phone photo is a few megabytes; a scanned PDF rarely more.</summary>
     public const long MaxFileSizeBytes = 20 * 1024 * 1024;
 
-    /// <summary>
-    /// Cap across the whole submission, so thirty pages at the per-page maximum
-    /// cannot be used to push 600 MB through one request.
-    /// </summary>
     public const long MaxTotalUploadBytes = 100 * 1024 * 1024;
 
-    /// <summary>Nothing in this archive predates the university's digital records.</summary>
+    // A sub-limit within UploadPaperRequest.MaxFiles, which counts pages. A PDF is
+    // already a whole document, so more than one means the paper arrived split.
+    public const int MaxPdfFiles = 2;
+
     private const int MinYear = 1990;
 
     private readonly ExamArchiveDbContext _db;
@@ -91,20 +71,8 @@ public sealed class PaperSubmissionService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Stores a submitted paper.
-    /// </summary>
-    /// <param name="initialStatus">
-    /// <see cref="PaperStatus.Pending"/> for a public submission, or
-    /// <see cref="PaperStatus.Approved"/> when staff upload a paper directly and
-    /// it should appear in the archive at once.
-    /// </param>
-    /// <param name="submittedByUserId">
-    /// The staff account publishing directly, or null for a public submission.
-    /// Taken as a parameter rather than read from the request: it comes from the
-    /// session cookie the server itself issued, and anything the client could put in
-    /// the form would be a claim about identity rather than proof of one.
-    /// </param>
+    // submittedByUserId is a parameter rather than a request field: it comes from
+    // the session cookie the server issued, not from a claim the client can make.
     public async Task<PaperSubmissionResult> SubmitAsync(
         UploadPaperRequest request,
         PaperStatus initialStatus,
@@ -113,8 +81,8 @@ public sealed class PaperSubmissionService
     {
         var errors = new List<PaperSubmissionError>();
 
-        // The subject's code and name are needed for the file names anyway, so
-        // this doubles as the existence check — one query instead of two.
+        // The subject's code and name are needed for the file names anyway, so this
+        // doubles as the existence check — one query instead of two.
         var subject = await _db.Subjects
             .AsNoTracking()
             .Where(s => s.Id == request.SubjectId)
@@ -128,11 +96,8 @@ public sealed class PaperSubmissionService
                 $"Subject {request.SubjectId} does not exist."));
         }
 
-        // ExamType needs no checking: model binding has already rejected anything
-        // outside the enum with a 400 before this runs.
-
-        // Next year is allowed: an exam sat in January is often archived against
-        // the academic year it belongs to rather than the calendar year it fell in.
+        // Next year is allowed: an exam sat in January is often archived against the
+        // academic year it belongs to rather than the calendar year it fell in.
         var maxYear = DateTime.UtcNow.Year + 1;
         if (request.Year < MinYear || request.Year > maxYear)
         {
@@ -141,9 +106,8 @@ public sealed class PaperSubmissionService
                 $"Year must be between {MinYear} and {maxYear}."));
         }
 
-        // Count is enforced by attributes, so an empty list has already failed
-        // model validation — skip the content checks rather than report a second,
-        // confusing error on top of it.
+        // An empty list has already failed model validation, so skip the content
+        // checks rather than report a second, confusing error on top of it.
         var fileTypes = request.Files.Count > 0
             ? await ValidateFilesAsync(request.Files, errors, cancellationToken)
             : null;
@@ -156,9 +120,8 @@ public sealed class PaperSubmissionService
         var submissionId = PaperFileStorage.NewSubmissionId();
         var written = new List<string>(request.Files.Count);
 
-        // Issued only for submissions that go into the queue. A staff upload is
-        // published immediately and its author can already see it in the archive,
-        // so a code to check on it would answer a question nobody has.
+        // Issued only for submissions that go into the queue: a staff upload is
+        // published immediately and its author can already see it.
         var claimToken = initialStatus == PaperStatus.Pending
             ? ClaimToken.Generate()
             : null;
@@ -173,9 +136,7 @@ public sealed class PaperSubmissionService
             SubmittedByUserId = submittedByUserId,
             ClaimTokenHash = claimToken is null ? null : ClaimToken.Hash(claimToken),
 
-            // A staff upload is published without passing through the queue, so
-            // the decision is made here and now. Recording it keeps the constraint
-            // satisfied and stops these papers looking like they were never seen.
+            // A staff upload skips the queue, so the decision is made here and now.
             ReviewedAt = initialStatus == PaperStatus.Pending ? null : DateTime.UtcNow
         };
 
@@ -183,8 +144,7 @@ public sealed class PaperSubmissionService
         {
             // Files first, row second. The reverse order would leave a row pointing
             // at files that were never written; this order can at worst leave
-            // unreferenced files, which the cleanup below handles and which are
-            // harmless if that too fails.
+            // unreferenced files, which the cleanup below handles.
             for (var i = 0; i < request.Files.Count; i++)
             {
                 var pageNumber = i + 1;
@@ -206,9 +166,6 @@ public sealed class PaperSubmissionService
 
                     if (sanitized is null)
                     {
-                        // The signature matched but the image would not decode, so
-                        // it is damaged or malformed. Reported against the page so
-                        // the submitter knows which file to replace.
                         errors.Add(new PaperSubmissionError(
                             $"{nameof(UploadPaperRequest.Files)}[{i}]",
                             $"Page {pageNumber} could not be read as an image. It may be damaged."));
@@ -245,13 +202,7 @@ public sealed class PaperSubmissionService
         return PaperSubmissionResult.Success(paper, claimToken);
     }
 
-    /// <summary>
-    /// Checks every uploaded page is a non-empty, reasonably sized file in an
-    /// accepted format.
-    /// </summary>
-    /// <returns>
-    /// The resolved format of each file, positionally, or null if any file failed.
-    /// </returns>
+    // Returns the resolved format of each file, positionally, or null if any failed.
     private static async Task<PaperFileType[]?> ValidateFilesAsync(
         List<IFormFile> files,
         List<PaperSubmissionError> errors,
@@ -324,15 +275,21 @@ public sealed class PaperSubmissionService
             valid = false;
         }
 
-        // A paper of mixed formats is almost certainly a mistake — a PDF is already
-        // the whole document, so pairing it with loose images means the submitter
-        // picked the wrong files.
-        if (valid && resolved.Any(t => t == PaperFileTypes.Pdf) && resolved.Length > 1)
+        // Only worth asking once every file has resolved to a format; until then
+        // some entries of `resolved` are still null and the count would be wrong.
+        // Formats may otherwise be mixed freely.
+        if (valid)
         {
-            errors.Add(new PaperSubmissionError(
-                nameof(UploadPaperRequest.Files),
-                "A PDF must be submitted on its own. Upload either one PDF or a set of images."));
-            valid = false;
+            var pdfCount = resolved.Count(t => t == PaperFileTypes.Pdf);
+
+            if (pdfCount > MaxPdfFiles)
+            {
+                errors.Add(new PaperSubmissionError(
+                    nameof(UploadPaperRequest.Files),
+                    $"A submission may contain at most {MaxPdfFiles} PDFs, "
+                        + $"and this one has {pdfCount}."));
+                valid = false;
+            }
         }
 
         return valid ? resolved : null;

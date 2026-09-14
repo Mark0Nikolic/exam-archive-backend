@@ -5,17 +5,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Services;
 
-/// <summary>
-/// Turns a paper id and page number into a file response.
-/// </summary>
-/// <remarks>
-/// Both the public browse API and the moderation queue serve stored pages, and
-/// the only difference between them is whether unapproved papers are visible.
-/// That difference is the security boundary between the two, so the surrounding
-/// logic lives here as one implementation rather than as two that could drift:
-/// a containment check silently dropped from one copy would be invisible until
-/// it was exploited.
-/// </remarks>
+// Turns a paper id and page number into a file response. One implementation rather
+// than two, because the only difference between the public and moderation cases is
+// whether unapproved papers are visible — and that is the security boundary.
 public sealed class PaperFileServer
 {
     private readonly ExamArchiveDbContext _db;
@@ -32,16 +24,8 @@ public sealed class PaperFileServer
         _logger = logger;
     }
 
-    /// <summary>
-    /// Serves one page, or a 404 if it is not visible to this caller, not on
-    /// disk, or stored at a path that escapes the uploads folder.
-    /// </summary>
-    /// <param name="approvedOnly">
-    /// True for the public API, where a pending paper must be indistinguishable
-    /// from one that does not exist. False for moderation, which reviews exactly
-    /// the papers the public cannot see.
-    /// </param>
-    /// <param name="asAttachment">True to force a save dialog, false to display in the browser.</param>
+    // approvedOnly is true for the public API, where a pending paper must be
+    // indistinguishable from one that does not exist.
     public async Task<IActionResult> ServeAsync(
         HttpResponse response,
         int paperId,
@@ -74,8 +58,8 @@ public sealed class PaperFileServer
 
         if (!_storage.TryResolve(page.StoredPath, out var absolutePath))
         {
-            // Only reachable if a row's path was written by something other than
-            // the upload endpoint, so treat it as data corruption rather than a miss.
+            // Only reachable if a row's path was written by something other than the
+            // upload endpoint, so treat it as corruption rather than a miss.
             _logger.LogError(
                 "Paper {PaperId} page {PageNumber} has stored path {Path}, which escapes the uploads root.",
                 paperId, pageNumber, page.StoredPath);
@@ -85,8 +69,6 @@ public sealed class PaperFileServer
 
         if (!File.Exists(absolutePath))
         {
-            // The row and the disk have drifted apart. Worth a log line — it means
-            // a file was removed out from under the archive.
             _logger.LogWarning(
                 "Paper {PaperId} page {PageNumber} points at {Path}, which is missing from disk.",
                 paperId, pageNumber, absolutePath);
@@ -104,16 +86,14 @@ public sealed class PaperFileServer
             asAttachment);
 
         // Range processing on: PDF viewers fetch the trailer first, then jump to the
-        // pages they need, rather than pulling the whole file down to show page one.
+        // pages they need.
         return new PhysicalFileResult(absolutePath, page.ContentType)
         {
             EnableRangeProcessing = true
         };
     }
 
-    /// <summary>
-    /// Lists a paper's pages, or null if the paper is not visible to this caller.
-    /// </summary>
+    // Null when the paper is not visible to this caller.
     public async Task<List<Dtos.PaperFileDto>?> ListAsync(
         int paperId,
         bool approvedOnly,

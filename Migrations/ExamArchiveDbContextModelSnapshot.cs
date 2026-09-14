@@ -15,25 +15,27 @@ namespace ExamArchive.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
+            modelBuilder
+                .HasAnnotation("ProductVersion", "10.0.10")
+                .HasAnnotation("Relational:MaxIdentifierLength", 64);
 
             modelBuilder.Entity("ExamArchive.Models.Major", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("NameEn")
                         .HasMaxLength(200)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("NameSr")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(200)");
 
                     b.Property<int>("StudiesId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -45,13 +47,13 @@ namespace ExamArchive.Migrations
             modelBuilder.Entity("ExamArchive.Models.MajorSubject", b =>
                 {
                     b.Property<int>("MajorId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int>("SubjectId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int>("YearOfStudy")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.HasKey("MajorId", "SubjectId");
 
@@ -59,7 +61,7 @@ namespace ExamArchive.Migrations
 
                     b.ToTable("MajorSubjects", t =>
                         {
-                            t.HasCheckConstraint("CK_MajorSubject_YearOfStudy", "[YearOfStudy] >= 1 AND [YearOfStudy] <= 6");
+                            t.HasCheckConstraint("CK_MajorSubject_YearOfStudy", "`YearOfStudy` >= 1 AND `YearOfStudy` <= 6");
                         });
                 });
 
@@ -67,47 +69,47 @@ namespace ExamArchive.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("ClaimTokenHash")
                         .HasMaxLength(64)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(64)");
 
                     b.Property<string>("ExamType")
                         .IsRequired()
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(20)");
 
                     b.Property<int>("Month")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(500)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(500)");
 
                     b.Property<DateTime?>("ReviewedAt")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("datetime(6)");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT")
+                        .HasColumnType("varchar(20)")
                         .HasDefaultValue("Pending");
 
                     b.Property<int>("SubjectId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int?>("SubmittedByUserId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("UploadedAt")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                        .HasColumnType("datetime(6)")
+                        .HasDefaultValueSql("(UTC_TIMESTAMP())");
 
                     b.Property<int>("Year")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -120,15 +122,15 @@ namespace ExamArchive.Migrations
 
                     b.ToTable("Papers", t =>
                         {
-                            t.HasCheckConstraint("CK_Paper_ExamType", "[ExamType] IN ('Midterm', 'Final', 'Resit')");
+                            t.HasCheckConstraint("CK_Paper_ExamType", "`ExamType` IN ('Midterm', 'Final', 'Resit')");
 
-                            t.HasCheckConstraint("CK_Paper_Month", "[Month] >= 1 AND [Month] <= 12");
+                            t.HasCheckConstraint("CK_Paper_Month", "`Month` >= 1 AND `Month` <= 12");
 
-                            t.HasCheckConstraint("CK_Paper_RejectionReason", "[Status] = 'Rejected' OR [RejectionReason] IS NULL");
+                            t.HasCheckConstraint("CK_Paper_RejectionReason", "`Status` = 'Rejected' OR `RejectionReason` IS NULL");
 
-                            t.HasCheckConstraint("CK_Paper_ReviewedAt", "[Status] <> 'Pending' OR [ReviewedAt] IS NULL");
+                            t.HasCheckConstraint("CK_Paper_ReviewedAt", "`Status` <> 'Pending' OR `ReviewedAt` IS NULL");
 
-                            t.HasCheckConstraint("CK_Paper_Status", "[Status] IN ('Pending', 'Approved', 'Rejected')");
+                            t.HasCheckConstraint("CK_Paper_Status", "`Status` IN ('Pending', 'Approved', 'Rejected')");
                         });
                 });
 
@@ -136,26 +138,26 @@ namespace ExamArchive.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(100)");
 
                     b.Property<int>("PageNumber")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<int>("PaperId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<long>("SizeBytes")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("bigint");
 
                     b.Property<string>("StoredPath")
                         .IsRequired()
                         .HasMaxLength(500)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(500)");
 
                     b.HasKey("Id");
 
@@ -164,11 +166,11 @@ namespace ExamArchive.Migrations
 
                     b.ToTable("PaperFiles", t =>
                         {
-                            t.HasCheckConstraint("CK_PaperFile_ContentType", "[ContentType] IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')");
+                            t.HasCheckConstraint("CK_PaperFile_ContentType", "`ContentType` IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')");
 
-                            t.HasCheckConstraint("CK_PaperFile_PageNumber", "[PageNumber] >= 1");
+                            t.HasCheckConstraint("CK_PaperFile_PageNumber", "`PageNumber` >= 1");
 
-                            t.HasCheckConstraint("CK_PaperFile_SizeBytes", "[SizeBytes] >= 0");
+                            t.HasCheckConstraint("CK_PaperFile_SizeBytes", "`SizeBytes` >= 0");
                         });
                 });
 
@@ -176,16 +178,16 @@ namespace ExamArchive.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("NameEn")
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(100)");
 
                     b.Property<string>("NameSr")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(100)");
 
                     b.HasKey("Id");
 
@@ -210,20 +212,20 @@ namespace ExamArchive.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<string>("Code")
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(20)");
 
                     b.Property<string>("NameEn")
                         .HasMaxLength(200)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("NameSr")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(200)");
 
                     b.HasKey("Id");
 
@@ -237,38 +239,36 @@ namespace ExamArchive.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                        .HasColumnType("datetime(6)")
+                        .HasDefaultValueSql("(UTC_TIMESTAMP())");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
+                        .HasColumnType("tinyint(1)")
                         .HasDefaultValue(true);
 
                     b.Property<bool>("MustChangePassword")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
+                        .HasColumnType("tinyint(1)")
                         .HasDefaultValue(false);
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasMaxLength(256)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("varchar(256)");
 
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
 
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("TEXT")
-                        .UseCollation("NOCASE");
+                        .HasColumnType("varchar(50)")
+                        .UseCollation("utf8mb4_0900_ai_ci");
 
                     b.HasKey("Id");
 
@@ -277,7 +277,7 @@ namespace ExamArchive.Migrations
 
                     b.ToTable("Users", t =>
                         {
-                            t.HasCheckConstraint("CK_User_Role", "[Role] IN ('Moderator', 'Admin')");
+                            t.HasCheckConstraint("CK_User_Role", "`Role` IN (1, 2, 3, 4)");
                         });
                 });
 

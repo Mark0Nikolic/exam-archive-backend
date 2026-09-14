@@ -1,0 +1,72 @@
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (7ms) [Parameters=[@usernames1='?' (Size = 50), @usernames2='?' (Size = 50), @usernames3='?' (Size = 50), @usernames4='?' (Size = 50), @usernames5='?' (Size = 50), @usernames6='?' (Size = 50), @usernames7='?' (Size = 50), @usernames8='?' (Size = 50), @usernames9='?' (Size = 50), @usernames10='?' (Size = 50)], CommandType='Text', CommandTimeout='30']
+      SELECT `u`.`Id`, `u`.`CreatedAt`, `u`.`IsActive`, `u`.`MustChangePassword`, `u`.`PasswordHash`, `u`.`Role`, `u`.`Username`
+      FROM `Users` AS `u`
+      WHERE `u`.`Username` IN (@usernames1, @usernames2, @usernames3, @usernames4, @usernames5, @usernames6, @usernames7, @usernames8, @usernames9, @usernames10)
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@p1='?' (DbType = Int32), @p0='?' (Size = 256), @p3='?' (DbType = Int32), @p2='?' (Size = 256), @p5='?' (DbType = Int32), @p4='?' (Size = 256), @p7='?' (DbType = Int32), @p6='?' (Size = 256), @p9='?' (DbType = Int32), @p8='?' (Size = 256), @p11='?' (DbType = Int32), @p10='?' (Size = 256)], CommandType='Text', CommandTimeout='30']
+      UPDATE `Users` SET `PasswordHash` = @p0
+      WHERE `Id` = @p1;
+      SELECT ROW_COUNT();
+      
+      UPDATE `Users` SET `PasswordHash` = @p2
+      WHERE `Id` = @p3;
+      SELECT ROW_COUNT();
+      
+      UPDATE `Users` SET `PasswordHash` = @p4
+      WHERE `Id` = @p5;
+      SELECT ROW_COUNT();
+      
+      UPDATE `Users` SET `PasswordHash` = @p6
+      WHERE `Id` = @p7;
+      SELECT ROW_COUNT();
+      
+      UPDATE `Users` SET `PasswordHash` = @p8
+      WHERE `Id` = @p9;
+      SELECT ROW_COUNT();
+      
+      UPDATE `Users` SET `PasswordHash` = @p10
+      WHERE `Id` = @p11;
+      SELECT ROW_COUNT();
+warn: ExamArchive[0]
+      Development accounts ready with the password 'password' - created: none; reset: admin, moderator, student, milica, stefan, jovana. These exist only in the Development environment.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT `s`.`Id`, `s`.`Code`, `s`.`NameEn`, `s`.`NameSr`
+      FROM `Subjects` AS `s`
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT `m`.`Id`, `m`.`NameEn`, `m`.`NameSr`, `m`.`StudiesId`
+      FROM `Majors` AS `m`
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT EXISTS (
+          SELECT 1
+          FROM `Majors` AS `m`)
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT `p`.`Id`, `p`.`ClaimTokenHash`, `p`.`ExamType`, `p`.`Month`, `p`.`RejectionReason`, `p`.`ReviewedAt`, `p`.`Status`, `p`.`SubjectId`, `p`.`SubmittedByUserId`, `p`.`UploadedAt`, `p`.`Year`
+      FROM `Papers` AS `p`
+      WHERE `p`.`SubmittedByUserId` IS NULL
+      ORDER BY `p`.`Id`
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT `p`.`Id`, `p`.`ContentType`, `p`.`PageNumber`, `p`.`PaperId`, `p`.`SizeBytes`, `p`.`StoredPath`, `p0`.`Id`, `p0`.`ClaimTokenHash`, `p0`.`ExamType`, `p0`.`Month`, `p0`.`RejectionReason`, `p0`.`ReviewedAt`, `p0`.`Status`, `p0`.`SubjectId`, `p0`.`SubmittedByUserId`, `p0`.`UploadedAt`, `p0`.`Year`, `s`.`Id`, `s`.`Code`, `s`.`NameEn`, `s`.`NameSr`
+      FROM `PaperFiles` AS `p`
+      INNER JOIN `Papers` AS `p0` ON `p`.`PaperId` = `p0`.`Id`
+      INNER JOIN `Subjects` AS `s` ON `p0`.`SubjectId` = `s`.`Id`
+      WHERE `p`.`SizeBytes` = 0
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT EXISTS (
+          SELECT 1
+          FROM `Users` AS `u`
+          WHERE (`u`.`Role` = 'Admin') AND `u`.`IsActive`)
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5000
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: E:\Visual Studio Projects\exam-archive-backend

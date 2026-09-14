@@ -1,5 +1,7 @@
 using ExamArchive.Data;
 using ExamArchive.Dtos;
+using ExamArchive.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +10,7 @@ namespace ExamArchive.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class MajorsController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
@@ -17,14 +20,12 @@ public class MajorsController : ControllerBase
         _db = db;
     }
 
-    /// <summary>
-    /// Lists majors, optionally narrowed to a single study level.
-    /// </summary>
-    /// <param name="studiesId">Study level to filter by. Omit to list every major.</param>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<MajorDto>>> GetMajors(
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<PagedResult<MajorDto>>> GetMajors(
         [FromQuery] int? studiesId,
+        [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
     {
         var query = _db.Majors.AsNoTracking();
@@ -34,18 +35,13 @@ public class MajorsController : ControllerBase
             query = query.Where(m => m.StudiesId == studiesId);
         }
 
-        // Not sorted by name here. SQLite compares text byte by byte, which puts
-        // Č, Ć, Š, Ž and Đ after Z and would exile every major starting with one
-        // to the bottom of the list. Correct order also depends on which language
-        // and script the reader picked, which only the client knows — so it sorts,
-        // with localeCompare(_, 'sr').
-        //
-        // Projecting in the query means EF selects only these columns and never
-        // materialises an entity graph, so there is nothing to serialise circularly.
+        // Not sorted by name: the correct order depends on which language and script
+        // the reader picked, which only the client knows. Id is unique, so ordering
+        // by it alone is already the total order paging needs.
         var majors = await query
             .OrderBy(m => m.Id)
             .Select(m => new MajorDto(m.Id, m.NameSr, m.NameEn, m.StudiesId))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(majors);
     }

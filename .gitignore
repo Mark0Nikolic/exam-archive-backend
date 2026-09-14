@@ -5,6 +5,7 @@ obj/
 *.suo
 .vs/
 appsettings.Development.json
+appsettings.Production.json
 appsettings.*.local.json
 
 ## ===== Local data (recreated by `dotnet ef database update`) =====
@@ -42,3 +43,12 @@ Thumbs.db
 *.pfx
 *.key
 secrets.json
+
+# Web Deploy credentials. The .PublishSettings downloaded from the host carries the
+# deploy password in plain text, and the .pubxml.user Visual Studio writes beside an
+# imported profile carries it encrypted to this machine only.
+*.PublishSettings
+*.pubxml.user
+
+# Git worktrees Claude Code creates. Never part of the repo.
+.claude/worktrees/
