@@ -279,8 +279,8 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers?status=Rejected
 Accept: application/json
 
-### One pending paper. The same route the public uses — it 404s for them and
-### answers for staff.
+### One pending paper. Staff can open any; an ordinary user can open it only when
+### they submitted it, while another ordinary user receives 403.
 GET {{ExamArchive_HostAddress}}/api/papers/28
 Accept: application/json
 

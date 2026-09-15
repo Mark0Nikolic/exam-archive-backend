@@ -54,6 +54,7 @@ public sealed class PapersControllerTests
         var result = await GetAsync(CreateController(db, userId: 10, UserRole.User));
 
         Assert.Equal([1, 3, 6, 5], result.Data.Select(p => p.Id));
+        Assert.DoesNotContain(result.Data, p => p.Id is 2 or 4);
         Assert.Equal([true, true, false, true], result.Data.Select(p => p.IsOwnedByCurrentUser));
         Assert.Equal(4, result.Meta.TotalItems);
     }
@@ -107,6 +108,50 @@ public sealed class PapersControllerTests
         Assert.Equal(2, result.Meta.PerPage);
         Assert.Equal(6, result.Meta.TotalItems);
         Assert.Equal(3, result.Meta.TotalPages);
+    }
+
+    [Theory]
+    [InlineData(PaperStatus.Pending)]
+    [InlineData(PaperStatus.Rejected)]
+    public async Task OrdinaryUserCanOpenTheirOwnUnapprovedPaper(PaperStatus status)
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, status, 10, 2024, 1, Utc(2024, 1, 1)));
+
+        var action = await CreateController(db, userId: 10, UserRole.User)
+            .GetPaper(1, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var paper = Assert.IsType<PaperDetailDto>(ok.Value);
+        Assert.Equal(1, paper.Id);
+        Assert.Equal(status, paper.Status);
+    }
+
+    [Theory]
+    [InlineData(PaperStatus.Pending)]
+    [InlineData(PaperStatus.Rejected)]
+    public async Task AnotherUsersUnapprovedPaperReturnsForbidden(PaperStatus status)
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, status, 20, 2024, 1, Utc(2024, 1, 1)));
+
+        var action = await CreateController(db, userId: 10, UserRole.User)
+            .GetPaper(1, CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnknownPaperStillReturnsNotFound()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db);
+
+        var action = await CreateController(db, userId: 10, UserRole.User)
+            .GetPaper(999, CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(action.Result);
     }
 
     [Fact]

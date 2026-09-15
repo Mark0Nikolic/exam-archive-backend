@@ -164,8 +164,9 @@ Cheaper alternative: keep the current user in context after login, and if you al
 know you are signed in, treat a 401 from a staff route as "not permitted" without the
 extra round trip. Only fall back to `/api/me` when you have no user in state.
 
-**One real 403 remains**, and it is unrelated: an account on an admin-issued temporary
-password is blocked from everything except changing it.
+**A real 403 means the caller is signed in but this particular resource is forbidden.**
+Examples are an account that still owes a temporary-password change, an administrator
+operation that requires SuperAdmin, and another user's pending/rejected paper detail.
 
 ```json
 {
@@ -348,14 +349,14 @@ one shared render function for "a paper's files", normalise at the boundary.
 | `GET /papers` — mixed authorized list | 401 | approved + own pending/rejected | all | all | all |
 | `GET /papers?status=...` | 401 | same ownership scope | all | all | all |
 | `GET /papers/{id}` — approved | 401 | ✅ | ✅ | ✅ | ✅ |
-| `GET /papers/{id}` — pending/rejected | 401 | 404 | ✅ | ✅ | ✅ |
+| `GET /papers/{id}` — pending/rejected | 401 | own only; others 403 | ✅ | ✅ | ✅ |
 | `POST /papers/upload` | 401 | ✅ → Pending | ✅ → Approved | ✅ → Approved | ✅ → Approved |
 | `POST /papers/{id}/approve` `/reject` | 401 | 401 | ✅ | ✅ | ✅ |
 | `DELETE /papers/{id}` | 401 | 401 | **401** | ✅ | ✅ |
 
-Note the two different "no" answers on the detail route: unapproved papers are **404**
-for anyone who may not see them, never 403 or 401. That is intentional — a distinct
-code would let anyone probe ids to discover that a pending submission exists.
+On the detail route, **404** means the id does not exist and **403** means the paper
+exists but is another user's pending/rejected submission. The list endpoint still
+omits that row entirely.
 
 Gate your UI on `isStaff(user.role)` and `isAdmin(user.role)`. A moderator sees the
 Delete button 401 if you show it to them.
@@ -531,7 +532,8 @@ GET /api/papers?page=2&perPage=5
 
 ### 6.2 `GET /api/papers/{id}`
 
-Requires a session. A User may open approved papers; staff may open any status.
+Requires a session. A User may open approved papers and their own pending/rejected
+submissions; staff may open any paper.
 
 **200** — note `files` is grouped by format, and formats with no pages are absent:
 
@@ -569,8 +571,9 @@ Requires a session. A User may open approved papers; staff may open any status.
 groups as `pdf: [1,2]`, `jpg: [3,4,5,6,7]`, `png: [8,9]`. To render in order, flatten
 and sort by `pageNumber`; to offer "download the PDF", read `files.pdf`.
 
-**404** — no such paper, **or** it exists but is not visible to you. You cannot tell
-these apart, by design.
+**403** — the paper exists but is another user's pending/rejected submission.
+
+**404** — no paper with that id exists.
 
 ---
 

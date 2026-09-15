@@ -45,9 +45,15 @@ builder.Services.AddScoped<PaperSubmissionService>();
 builder.Services.AddScoped<UserAccountService>();
 
 // Read above the cookie because the cookie's SameSite mode depends on it.
-var allowedOrigins = builder.Configuration
-    .GetSection("Cors:AllowedOrigins")
-    .Get<string[]>() ?? [];
+// Trim and drop a trailing slash: WithOrigins is an exact string match, and a
+// copied origin with whitespace or "http://localhost:5173/" silently fails CORS.
+var allowedOrigins = (builder.Configuration
+        .GetSection("Cors:AllowedOrigins")
+        .Get<string[]>() ?? [])
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .Where(origin => origin.Length > 0)
+    .Distinct(StringComparer.Ordinal)
+    .ToArray();
 
 var hasCrossSiteFrontend = allowedOrigins.Length > 0;
 
@@ -133,12 +139,15 @@ using (var scope = app.Services.CreateScope())
     await AdminBootstrap.EnsureAdminAsync(db, accounts, app.Configuration, app.Logger);
 }
 
-app.UseHttpsRedirection();
-
+// CORS must run before HTTPS redirection. A browser preflight that is redirected
+// never retries with Origin, so the real request then looks like it has no
+// Access-Control-Allow-Origin header.
 if (hasCrossSiteFrontend)
 {
     app.UseCors();
 }
+
+app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();

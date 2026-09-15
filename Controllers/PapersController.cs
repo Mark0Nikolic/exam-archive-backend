@@ -294,20 +294,48 @@ public class PapersController : ControllerBase
         return true;
     }
 
-    // Listing an owned submission does not grant access to its unreviewed contents.
-    // For a caller who is not staff, an unapproved paper — including their own — is
-    // 404 rather than 403, so other paper ids cannot be probed for queue membership.
+    // An ordinary account may open its own pending/rejected submission. Another
+    // user's unapproved paper is 403: unlike the list endpoint, a direct request
+    // names an id and the API explicitly distinguishes forbidden from nonexistent.
     [HttpGet("{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PaperDetailDto>> GetPaper(
         int id,
         CancellationToken cancellationToken)
     {
-        var paper = await LoadAsync(id, User.IsStaff(), cancellationToken);
+        var userId = User.GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
 
-        return paper is null ? NotFound() : Ok(paper);
+        var paper = await LoadAsync(
+            id,
+            includeUnapproved: User.IsStaff(),
+            ownedByUserId: userId.Value,
+            cancellationToken);
+
+        if (paper is not null)
+        {
+            return Ok(paper);
+        }
+
+        // The visibility query deliberately returned no row. Check existence only
+        // now, on the exceptional path, so successful detail requests stay one
+        // database round trip.
+        var exists = await _db.Papers
+            .AsNoTracking()
+            .AnyAsync(p => p.Id == id, cancellationToken);
+
+        return exists
+            ? Problem(
+                title: "Paper access denied",
+                detail: "You may open approved papers and your own submissions only.",
+                statusCode: StatusCodes.Status403Forbidden)
+            : NotFound();
     }
 
     // Staff submissions are published at once; everyone else's wait in the queue. A
@@ -470,7 +498,8 @@ public class PapersController : ControllerBase
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        return Ok(await LoadAsync(id, includeUnapproved: true, cancellationToken));
+        return Ok(await LoadAsync(
+            id, includeUnapproved: true, ownedByUserId: null, cancellationToken));
     }
 
     // The files stay on disk: a rejection is a judgement that can be revisited, and
@@ -500,7 +529,8 @@ public class PapersController : ControllerBase
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        return Ok(await LoadAsync(id, includeUnapproved: true, cancellationToken));
+        return Ok(await LoadAsync(
+            id, includeUnapproved: true, ownedByUserId: null, cancellationToken));
     }
 
     // Staff rather than administrator: this is a judgement about one paper, which is
@@ -546,7 +576,8 @@ public class PapersController : ControllerBase
 
         _logger.LogInformation("{Moderator} edited paper {PaperId}.", User.Identity?.Name, id);
 
-        return Ok(await LoadAsync(id, includeUnapproved: true, cancellationToken));
+        return Ok(await LoadAsync(
+            id, includeUnapproved: true, ownedByUserId: null, cancellationToken));
     }
 
     // Distinct from rejection, which stays reversible. This is for papers that should
@@ -591,9 +622,9 @@ public class PapersController : ControllerBase
         return NoContent();
     }
 
-    // includeUnapproved is passed rather than read from User inside, so the calls
-    // made after a moderator acts — where the answer is always true — do not depend
-    // on re-deriving it.
+    // Visibility inputs are passed rather than read from User inside: staff action
+    // responses include every status, while a normal detail request may include an
+    // unapproved paper only when ownedByUserId matches its submitter.
     //
     // The pages are projected in the same query as the paper: a separate round trip
     // per paper would be the classic N+1 in disguise. Grouping happens after the
@@ -601,12 +632,16 @@ public class PapersController : ControllerBase
     private async Task<PaperDetailDto?> LoadAsync(
         int id,
         bool includeUnapproved,
+        int? ownedByUserId,
         CancellationToken cancellationToken)
     {
         var paper = await _db.Papers
             .AsNoTracking()
             .Where(p => p.Id == id)
-            .Where(p => includeUnapproved || p.Status == PaperStatus.Approved)
+            .Where(p =>
+                includeUnapproved
+                || p.Status == PaperStatus.Approved
+                || (ownedByUserId != null && p.SubmittedByUserId == ownedByUserId))
             .Select(p => new
             {
                 p.Id,
