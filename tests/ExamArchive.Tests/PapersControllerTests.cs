@@ -197,6 +197,48 @@ public sealed class PapersControllerTests
     }
 
     [Fact]
+    public async Task StudiesIdWithoutASubjectReturnsPapersFromThatStudy()
+    {
+        await using var db = await SeedCurriculumPapersAsync();
+
+        var result = await ListAsync(
+            CreateController(db, userId: 11, UserRole.Moderator),
+            studiesId: 1);
+
+        Assert.Equal(2, result.Data.Count);
+        Assert.Contains(result.Data, p => p.Id == 1);
+        Assert.Contains(result.Data, p => p.Id == 2);
+        Assert.DoesNotContain(result.Data, p => p.Id == 3);
+    }
+
+    [Fact]
+    public async Task MajorIdWithoutASubjectReturnsPapersFromThatMajor()
+    {
+        await using var db = await SeedCurriculumPapersAsync();
+
+        var result = await ListAsync(
+            CreateController(db, userId: 11, UserRole.Moderator),
+            majorId: 2);
+
+        var paper = Assert.Single(result.Data);
+        Assert.Equal(2, paper.Id);
+    }
+
+    [Fact]
+    public async Task YearOfStudyWithStudiesIdReturnsPapersFromThatYear()
+    {
+        await using var db = await SeedCurriculumPapersAsync();
+
+        var result = await ListAsync(
+            CreateController(db, userId: 11, UserRole.Moderator),
+            studiesId: 1,
+            yearOfStudy: 2);
+
+        var paper = Assert.Single(result.Data);
+        Assert.Equal(2, paper.Id);
+    }
+
+    [Fact]
     public void BrowseAndSearchEndpointsRequireAuthentication()
     {
         Assert.NotNull(typeof(PapersController).GetCustomAttribute<AuthorizeAttribute>());
@@ -320,5 +362,65 @@ public sealed class PapersControllerTests
 
         var ok = Assert.IsType<OkObjectResult>(action.Result);
         return Assert.IsType<PagedResult<PaperDto>>(ok.Value);
+    }
+
+    private static async Task<PagedResult<PaperDto>> ListAsync(
+        PapersController controller,
+        int? studiesId = null,
+        int? majorId = null,
+        int? yearOfStudy = null,
+        int? subjectId = null)
+    {
+        var action = await controller.GetPapers(
+            studiesId,
+            majorId,
+            yearOfStudy,
+            subjectId,
+            examType: null,
+            month: null,
+            year: null,
+            paging: new PageRequest { PerPage = 100 },
+            status: null,
+            cancellationToken: CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        return Assert.IsType<PagedResult<PaperDto>>(ok.Value);
+    }
+
+    private static async Task<ExamArchiveDbContext> SeedCurriculumPapersAsync()
+    {
+        var db = CreateDatabase();
+        await db.Database.EnsureCreatedAsync();
+
+        var bachelorSubject = new Subject { Id = 1, Code = "CS1", NameSr = "А", NameEn = "A" };
+        var seSubject = new Subject { Id = 2, Code = "SE1", NameSr = "Б", NameEn = "B" };
+        var masterSubject = new Subject { Id = 3, Code = "MS1", NameSr = "В", NameEn = "C" };
+
+        db.Majors.AddRange(
+            new Major { Id = 1, NameSr = "Рачунарске науке", NameEn = "Computer Science", StudiesId = 1 },
+            new Major { Id = 2, NameSr = "Софтверско инжењерство", NameEn = "Software Engineering", StudiesId = 1 },
+            new Major { Id = 3, NameSr = "Наука о подацима", NameEn = "Data Science", StudiesId = 2 });
+        db.Subjects.AddRange(bachelorSubject, seSubject, masterSubject);
+        db.MajorSubjects.AddRange(
+            new MajorSubject { MajorId = 1, SubjectId = 1, YearOfStudy = 1 },
+            new MajorSubject { MajorId = 2, SubjectId = 2, YearOfStudy = 2 },
+            new MajorSubject { MajorId = 3, SubjectId = 3, YearOfStudy = 1 });
+
+        var papers = new[]
+        {
+            Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)),
+            Paper(2, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 2)),
+            Paper(3, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 3))
+        };
+        papers[0].SubjectId = 1;
+        papers[0].Subject = bachelorSubject;
+        papers[1].SubjectId = 2;
+        papers[1].Subject = seSubject;
+        papers[2].SubjectId = 3;
+        papers[2].Subject = masterSubject;
+
+        db.Papers.AddRange(papers);
+        await db.SaveChangesAsync();
+        return db;
     }
 }

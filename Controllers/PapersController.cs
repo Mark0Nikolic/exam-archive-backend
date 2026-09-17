@@ -47,15 +47,10 @@ public class PapersController : ControllerBase
     // archive; an ordinary account sees the approved archive plus its own pending
     // and rejected submissions.
     //
-    // The filter parameters do three different jobs. subjectId filters — a paper
-    // belongs to a subject and nothing else. examType, month and year filter too, and
-    // are the optional part.
-    //
-    // studiesId, majorId and yearOfStudy narrow nothing: they are the path the
-    // searcher walked to reach the subject, which cannot be recovered from the
-    // subject alone, so carrying them is what makes a search URL shareable. Being
-    // sent and not used is why they are verified rather than ignored — a
-    // contradiction is a 400, see ValidateCascadeAsync.
+    // studiesId, majorId, yearOfStudy and subjectId all filter, and any prefix of
+    // that chain is enough — choosing a study with "all majors" still narrows the
+    // grid. A contradiction between them is a 400, see ValidateCascadeAsync.
+    // examType, month and year (the sitting) are independent of that chain.
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -113,8 +108,29 @@ public class PapersController : ControllerBase
         if (subjectId is not null)
         {
             // With this applied, filtering on SubjectId then ordering by Year/Month
-            // matches the IX_Papers_SubjectId_Year_Month index exactly.
+            // matches the IX_Papers_SubjectId_Year_Month index exactly. The rest of
+            // the cascade was already checked; a paper has no major of its own.
             query = query.Where(p => p.SubjectId == subjectId);
+        }
+        else if (majorId is not null || studiesId is not null || yearOfStudy is not null)
+        {
+            var inCurriculum = _db.MajorSubjects.AsQueryable();
+
+            if (majorId is not null)
+            {
+                inCurriculum = inCurriculum.Where(ms => ms.MajorId == majorId);
+            }
+            else if (studiesId is not null)
+            {
+                inCurriculum = inCurriculum.Where(ms => ms.Major!.StudiesId == studiesId);
+            }
+
+            if (yearOfStudy is not null)
+            {
+                inCurriculum = inCurriculum.Where(ms => ms.YearOfStudy == yearOfStudy);
+            }
+
+            query = query.Where(p => inCurriculum.Select(ms => ms.SubjectId).Contains(p.SubjectId));
         }
 
         if (examType is not null)
@@ -200,9 +216,8 @@ public class PapersController : ControllerBase
         return Ok(papers);
     }
 
-    // Verified link by link — studies to major, then major to subject — because that
-    // is how the chain is built and how a client walks it. A link whose upper end was
-    // not sent cannot be checked and is left alone.
+    // Checked only where two ends of a link were both sent. A prefix of the chain
+    // (study with no major, major with no subject) is a filter, not an error.
     private async Task<bool> ValidateCascadeAsync(
         int? studiesId,
         int? majorId,
@@ -210,35 +225,7 @@ public class PapersController : ControllerBase
         int? subjectId,
         CancellationToken cancellationToken)
     {
-        if (studiesId is null && majorId is null && yearOfStudy is null)
-        {
-            return true;
-        }
-
-        // Refused rather than quietly dropped: a caller sending majorId alone means
-        // to narrow the archive to that major, and handing back the whole archive
-        // would answer a question they did not ask while looking like it worked.
-        if (subjectId is null)
-        {
-            ModelState.AddModelError(
-                "subjectId",
-                "SubjectId is required when studiesId, majorId or yearOfStudy is given.");
-
-            return false;
-        }
-
-        // Year of study lives on the major/subject pairing, so without a major it
-        // identifies no row and cannot be checked against one.
-        if (yearOfStudy is not null && majorId is null)
-        {
-            ModelState.AddModelError(
-                "majorId",
-                "MajorId is required when yearOfStudy is given.");
-
-            return false;
-        }
-
-        if (majorId is not null && (studiesId is not null || yearOfStudy is not null))
+        if (majorId is not null)
         {
             var majorInfo = await _db.Majors
                 .AsNoTracking()
@@ -256,9 +243,6 @@ public class PapersController : ControllerBase
                 return false;
             }
 
-            // Ceiling is the parent study's length. Skipped when the major is
-            // missing: the junction check below already reports that the subject
-            // is not taught there.
             if (yearOfStudy is not null
                 && majorInfo is not null
                 && yearOfStudy > majorInfo.YearsOfStudy)
@@ -270,38 +254,81 @@ public class PapersController : ControllerBase
                 return false;
             }
         }
-
-        if (majorId is null)
+        else if (yearOfStudy is not null && studiesId is not null)
         {
+            var yearsOfStudy = await _db.Studies
+                .AsNoTracking()
+                .Where(s => s.Id == studiesId)
+                .Select(s => (int?)s.YearsOfStudy)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (yearsOfStudy is not null && yearOfStudy > yearsOfStudy)
+            {
+                ModelState.AddModelError(
+                    "yearOfStudy",
+                    $"Year of study {yearOfStudy} is outside the {yearsOfStudy} years of studies {studiesId}.");
+
+                return false;
+            }
+        }
+
+        if (subjectId is not null && majorId is not null)
+        {
+            // One row or none, because (MajorId, SubjectId) is the junction's primary key.
+            // The year is fetched rather than compared inside the query so a mismatch can
+            // name the year the subject is really taught in.
+            var actualYearOfStudy = await _db.MajorSubjects
+                .AsNoTracking()
+                .Where(ms => ms.MajorId == majorId && ms.SubjectId == subjectId)
+                .Select(ms => (int?)ms.YearOfStudy)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (actualYearOfStudy is null)
+            {
+                ModelState.AddModelError(
+                    "subjectId",
+                    $"Subject {subjectId} is not taught in major {majorId}.");
+
+                return false;
+            }
+
+            if (yearOfStudy is not null && actualYearOfStudy != yearOfStudy)
+            {
+                ModelState.AddModelError(
+                    "yearOfStudy",
+                    $"Subject {subjectId} is taught in year {actualYearOfStudy} of major "
+                        + $"{majorId}, not year {yearOfStudy}.");
+
+                return false;
+            }
+
             return true;
         }
 
-        // One row or none, because (MajorId, SubjectId) is the junction's primary key.
-        // The year is fetched rather than compared inside the query so a mismatch can
-        // name the year the subject is really taught in.
-        var actualYearOfStudy = await _db.MajorSubjects
-            .AsNoTracking()
-            .Where(ms => ms.MajorId == majorId && ms.SubjectId == subjectId)
-            .Select(ms => (int?)ms.YearOfStudy)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (actualYearOfStudy is null)
+        if (subjectId is not null && (studiesId is not null || yearOfStudy is not null))
         {
-            ModelState.AddModelError(
-                "subjectId",
-                $"Subject {subjectId} is not taught in major {majorId}.");
+            var taught = _db.MajorSubjects.AsNoTracking().Where(ms => ms.SubjectId == subjectId);
 
-            return false;
-        }
+            if (studiesId is not null)
+            {
+                taught = taught.Where(ms => ms.Major!.StudiesId == studiesId);
+            }
 
-        if (yearOfStudy is not null && actualYearOfStudy != yearOfStudy)
-        {
-            ModelState.AddModelError(
-                "yearOfStudy",
-                $"Subject {subjectId} is taught in year {actualYearOfStudy} of major "
-                    + $"{majorId}, not year {yearOfStudy}.");
+            if (yearOfStudy is not null)
+            {
+                taught = taught.Where(ms => ms.YearOfStudy == yearOfStudy);
+            }
 
-            return false;
+            if (!await taught.AnyAsync(cancellationToken))
+            {
+                ModelState.AddModelError(
+                    "subjectId",
+                    studiesId is not null
+                        ? $"Subject {subjectId} is not taught in studies {studiesId}."
+                        : $"Subject {subjectId} is not taught in year {yearOfStudy}.");
+
+                return false;
+            }
         }
 
         return true;
