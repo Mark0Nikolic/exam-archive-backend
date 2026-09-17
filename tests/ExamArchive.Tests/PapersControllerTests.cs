@@ -155,6 +155,48 @@ public sealed class PapersControllerTests
     }
 
     [Fact]
+    public async Task YearOfStudyOutsideTheStudyLengthReturnsBadRequest()
+    {
+        await using var db = CreateDatabase();
+        await db.Database.EnsureCreatedAsync();
+
+        db.Majors.Add(new Major
+        {
+            Id = 1,
+            NameSr = "Рачунарске науке",
+            NameEn = "Computer Science",
+            StudiesId = 1
+        });
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        db.MajorSubjects.Add(new MajorSubject
+        {
+            MajorId = 1,
+            SubjectId = 1,
+            YearOfStudy = 3
+        });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .GetPapers(
+                studiesId: 1,
+                majorId: 1,
+                yearOfStudy: 4,
+                subjectId: 1,
+                examType: null,
+                month: null,
+                year: null,
+                paging: new PageRequest { PerPage = 100 },
+                status: null,
+                cancellationToken: CancellationToken.None);
+
+        var result = Assert.IsType<ObjectResult>(action.Result);
+        var problem = Assert.IsType<ValidationProblemDetails>(result.Value);
+        Assert.Contains(
+            "outside the 3 years of major 1",
+            Assert.Single(problem.Errors["yearOfStudy"]));
+    }
+
+    [Fact]
     public void BrowseAndSearchEndpointsRequireAuthentication()
     {
         Assert.NotNull(typeof(PapersController).GetCustomAttribute<AuthorizeAttribute>());

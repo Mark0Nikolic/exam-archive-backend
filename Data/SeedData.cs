@@ -69,6 +69,7 @@ public static class SeedData
         await BackfillMajorNamesAsync(db);
 
         await SeedCatalogueAsync(db);
+        await ClampSubjectYearsToStudyLengthAsync(db);
         await BackfillPaperSubmittersAsync(db, logger);
 
         // Last: it needs the papers above to exist, and it is what repairs a database
@@ -132,7 +133,7 @@ public static class SeedData
             Link(cs, databases, 2),
             Link(cs, os, 3),
             Link(cs, networks, 3),
-            Link(cs, ml, 4),
+            Link(cs, ml, 3),
 
             Link(se, math1, 1),
             Link(se, progFund, 1),
@@ -237,6 +238,30 @@ public static class SeedData
 
         // Linear Algebra is intentionally left with no papers — a subject that is
         // taught but has an empty archive, which the UI will need to handle.
+
+        await db.SaveChangesAsync();
+    }
+
+    // Databases seeded before bachelor's was 3 years still have the sample
+    // Machine Learning link in year 4. SeedCatalogueAsync will not rebuild them.
+    private static async Task ClampSubjectYearsToStudyLengthAsync(ExamArchiveDbContext db)
+    {
+        var over = await (
+            from ms in db.MajorSubjects
+            join major in db.Majors on ms.MajorId equals major.Id
+            join studies in db.Studies on major.StudiesId equals studies.Id
+            where ms.YearOfStudy > studies.YearsOfStudy
+            select new { Link = ms, studies.YearsOfStudy }).ToListAsync();
+
+        if (over.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var row in over)
+        {
+            row.Link.YearOfStudy = row.YearsOfStudy;
+        }
 
         await db.SaveChangesAsync();
     }

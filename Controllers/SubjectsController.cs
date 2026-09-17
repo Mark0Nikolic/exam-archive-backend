@@ -30,7 +30,7 @@ public class SubjectsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<PagedResult<SubjectDto>>> GetSubjects(
         [FromQuery, BindRequired] int majorId,
-        [FromQuery, Range(1, 6, ErrorMessage = "YearOfStudy must be between 1 and 6.")]
+        [FromQuery, Range(1, int.MaxValue, ErrorMessage = "YearOfStudy must be at least 1.")]
         int? yearOfStudy,
         [FromQuery] PageRequest paging,
         CancellationToken cancellationToken)
@@ -43,9 +43,24 @@ public class SubjectsController : ControllerBase
 
         if (yearOfStudy is not null)
         {
-            // Bounded to 1-6 above rather than left to match nothing: the
-            // CK_MajorSubject_YearOfStudy constraint means no row can hold a year
-            // outside that range, so a request for year 9 is a client bug.
+            // Ceiling is the parent study's length, not a global 1–6. An unknown
+            // major is left to return an empty page, same as an unknown majorId
+            // with no year: there is nothing to measure the year against.
+            var yearsOfStudy = await _db.Majors
+                .AsNoTracking()
+                .Where(m => m.Id == majorId)
+                .Select(m => (int?)m.Studies!.YearsOfStudy)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (yearsOfStudy is not null && yearOfStudy > yearsOfStudy)
+            {
+                ModelState.AddModelError(
+                    "yearOfStudy",
+                    $"Year of study {yearOfStudy} is outside the {yearsOfStudy} years of major {majorId}.");
+
+                return ValidationProblem(ModelState);
+            }
+
             query = query.Where(ms => ms.YearOfStudy == yearOfStudy);
         }
 

@@ -65,7 +65,7 @@ public class PapersController : ControllerBase
         int? studiesId,
         [FromQuery, Range(1, int.MaxValue, ErrorMessage = "MajorId must be a positive id.")]
         int? majorId,
-        [FromQuery, Range(1, 6, ErrorMessage = "YearOfStudy must be between 1 and 6.")]
+        [FromQuery, Range(1, int.MaxValue, ErrorMessage = "YearOfStudy must be at least 1.")]
         int? yearOfStudy,
         [FromQuery, Range(1, int.MaxValue, ErrorMessage = "SubjectId must be a positive id.")]
         int? subjectId,
@@ -203,8 +203,6 @@ public class PapersController : ControllerBase
     // Verified link by link — studies to major, then major to subject — because that
     // is how the chain is built and how a client walks it. A link whose upper end was
     // not sent cannot be checked and is left alone.
-    //
-    // At most one query runs, and only when something above the subject was sent.
     private async Task<bool> ValidateCascadeAsync(
         int? studiesId,
         int? majorId,
@@ -240,19 +238,34 @@ public class PapersController : ControllerBase
             return false;
         }
 
-        if (studiesId is not null && majorId is not null)
+        if (majorId is not null && (studiesId is not null || yearOfStudy is not null))
         {
-            var belongs = await _db.Majors
+            var majorInfo = await _db.Majors
                 .AsNoTracking()
-                .AnyAsync(
-                    m => m.Id == majorId && m.StudiesId == studiesId,
-                    cancellationToken);
+                .Where(m => m.Id == majorId)
+                .Select(m => new { m.StudiesId, m.Studies!.YearsOfStudy })
+                .FirstOrDefaultAsync(cancellationToken);
 
-            if (!belongs)
+            if (studiesId is not null
+                && (majorInfo is null || majorInfo.StudiesId != studiesId))
             {
                 ModelState.AddModelError(
                     "majorId",
                     $"Major {majorId} does not belong to studies {studiesId}.");
+
+                return false;
+            }
+
+            // Ceiling is the parent study's length. Skipped when the major is
+            // missing: the junction check below already reports that the subject
+            // is not taught there.
+            if (yearOfStudy is not null
+                && majorInfo is not null
+                && yearOfStudy > majorInfo.YearsOfStudy)
+            {
+                ModelState.AddModelError(
+                    "yearOfStudy",
+                    $"Year of study {yearOfStudy} is outside the {majorInfo.YearsOfStudy} years of major {majorId}.");
 
                 return false;
             }

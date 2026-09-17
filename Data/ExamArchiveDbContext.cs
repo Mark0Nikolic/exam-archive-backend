@@ -31,9 +31,16 @@ public class ExamArchiveDbContext : DbContext
             entity.Property(s => s.NameEn)
                 .HasMaxLength(100);
 
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint(
+                    "CK_Studies_YearsOfStudy",
+                    "`YearsOfStudy` >= 1");
+            });
+
             entity.HasData(
-                new Studies { Id = 1, NameSr = "Основне академске студије", NameEn = "Bachelor's" },
-                new Studies { Id = 2, NameSr = "Мастер академске студије", NameEn = "Master's" });
+                new Studies { Id = 1, NameSr = "Основне академске студије", NameEn = "Bachelor's", YearsOfStudy = 3 },
+                new Studies { Id = 2, NameSr = "Мастер академске студије", NameEn = "Master's", YearsOfStudy = 2 });
         });
 
         modelBuilder.Entity<Major>(entity =>
@@ -88,10 +95,11 @@ public class ExamArchiveDbContext : DbContext
 
             entity.ToTable(t =>
             {
-                // Six covers a 3-4 year bachelor's and a 1-2 year master's.
+                // Floor only: the ceiling is Studies.YearsOfStudy, which the API
+                // enforces, because a check constraint here cannot see that column.
                 t.HasCheckConstraint(
                     "CK_MajorSubject_YearOfStudy",
-                    "`YearOfStudy` >= 1 AND `YearOfStudy` <= 6");
+                    "`YearOfStudy` >= 1");
             });
         });
 

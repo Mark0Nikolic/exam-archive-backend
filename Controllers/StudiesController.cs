@@ -31,11 +31,12 @@ public class StudiesController : ControllerBase
     {
         // Ordered by Id, which is both the total order paging needs and the order the
         // levels were seeded in — bachelor's before master's. Not sorted by name, for
-        // the same reason as MajorsController.
+        // the same reason as MajorsController. YearsOfStudy is the year picker: the
+        // client renders 1..N rather than a hardcoded length.
         var studies = await _db.Studies
             .AsNoTracking()
             .OrderBy(s => s.Id)
-            .Select(s => new StudiesDto(s.Id, s.NameSr, s.NameEn))
+            .Select(s => new StudiesDto(s.Id, s.NameSr, s.NameEn, s.YearsOfStudy))
             .ToPagedResultAsync(paging, cancellationToken);
 
         return Ok(studies);
