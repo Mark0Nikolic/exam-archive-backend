@@ -6,6 +6,7 @@ using ExamArchive.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExamArchive.Tests;
 
@@ -64,6 +65,82 @@ public sealed class SubjectsControllerTests
         Assert.Equal(0, result.Meta.TotalItems);
     }
 
+    [Fact]
+    public async Task CreateSubjectAttachesItToTheMajor()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        var action = await CreateController(db).CreateSubject(
+            new CreateSubjectRequest
+            {
+                NameSr = "Базе података",
+                NameEn = "Databases",
+                Code = "IT240",
+                MajorId = 1,
+                YearOfStudy = 2
+            },
+            CancellationToken.None);
+
+        var created = Assert.IsType<CreatedAtActionResult>(action.Result);
+        var dto = Assert.IsType<SubjectDto>(created.Value);
+        Assert.Equal("IT240", dto.Code);
+        Assert.Equal(2, dto.YearOfStudy);
+        Assert.True(await db.MajorSubjects.AnyAsync(ms => ms.SubjectId == dto.Id && ms.MajorId == 1));
+    }
+
+    [Fact]
+    public async Task DuplicateSubjectCodeReturnsConflict()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        var action = await CreateController(db).CreateSubject(
+            new CreateSubjectRequest
+            {
+                NameSr = "Други",
+                Code = "TEST",
+                MajorId = 1,
+                YearOfStudy = 1
+            },
+            CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteSubjectWithPapersReturnsConflict()
+    {
+        await using var db = await SeedCurriculumAsync();
+        db.Papers.Add(new Paper
+        {
+            SubjectId = 1,
+            ExamType = ExamType.Final,
+            Month = 1,
+            Year = 2024,
+            Status = PaperStatus.Approved,
+            UploadedAt = DateTime.UtcNow,
+            ReviewedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db).DeleteSubject(1, CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(action);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteSubjectWithoutPapersReturnsNoContent()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        var action = await CreateController(db).DeleteSubject(1, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(action);
+        Assert.False(await db.Subjects.AnyAsync(s => s.Id == 1));
+        Assert.False(await db.MajorSubjects.AnyAsync(ms => ms.SubjectId == 1));
+    }
+
     private static async Task<ExamArchiveDbContext> SeedCurriculumAsync()
     {
         var db = CreateDatabase();
@@ -109,7 +186,7 @@ public sealed class SubjectsControllerTests
     {
         var user = new User { Id = 1, Username = "tester", Role = UserRole.User };
 
-        return new SubjectsController(db)
+        return new SubjectsController(db, NullLogger<SubjectsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
