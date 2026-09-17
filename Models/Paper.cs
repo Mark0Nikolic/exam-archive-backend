@@ -25,10 +25,6 @@ public class Paper
 
     public User? SubmittedBy { get; set; }
 
-    // SHA-256 of the claim code shown once in the upload response. Only the hash is
-    // kept, so a submitter who loses the code cannot be helped.
-    public string? ClaimTokenHash { get; set; }
-
     public PaperStatus Status { get; set; } = PaperStatus.Pending;
 
     // Null on a decided paper means the decision predates this column.

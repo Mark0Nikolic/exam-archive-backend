@@ -11,34 +11,28 @@ public sealed class PaperSubmissionResult
 {
     private PaperSubmissionResult(
         Paper? paper,
-        string? claimToken,
         IReadOnlyList<PaperSubmissionError> errors)
     {
         Paper = paper;
-        ClaimToken = claimToken;
         Errors = errors;
     }
 
     public Paper? Paper { get; }
 
-    // Carried on the result rather than on the paper, which stores only the hash.
-    // This is the single moment the code exists in readable form.
-    public string? ClaimToken { get; }
-
     public IReadOnlyList<PaperSubmissionError> Errors { get; }
 
     public bool Succeeded => Paper is not null;
 
-    public static PaperSubmissionResult Success(Paper paper, string? claimToken) =>
-        new(paper, claimToken, []);
+    public static PaperSubmissionResult Success(Paper paper) =>
+        new(paper, []);
 
     public static PaperSubmissionResult Failed(IReadOnlyList<PaperSubmissionError> errors) =>
-        new(null, null, errors);
+        new(null, errors);
 }
 
-// Validates a submitted paper, writes its pages to disk, and saves the row. Outside
-// the controllers because two of them submit papers — the public endpoint queues,
-// the staff endpoint publishes — and only the resulting status differs.
+// Validates a submitted paper, writes its pages to disk, and saves the row. The
+// caller supplies the initial status so a staff upload can publish immediately
+// while everyone else waits in the queue.
 //
 // Errors are returned rather than written to ModelState, which belongs to a
 // controller.
@@ -120,12 +114,6 @@ public sealed class PaperSubmissionService
         var submissionId = PaperFileStorage.NewSubmissionId();
         var written = new List<string>(request.Files.Count);
 
-        // Issued only for submissions that go into the queue: a staff upload is
-        // published immediately and its author can already see it.
-        var claimToken = initialStatus == PaperStatus.Pending
-            ? ClaimToken.Generate()
-            : null;
-
         var paper = new Paper
         {
             SubjectId = request.SubjectId,
@@ -134,7 +122,6 @@ public sealed class PaperSubmissionService
             Year = request.Year,
             Status = initialStatus,
             SubmittedByUserId = submittedByUserId,
-            ClaimTokenHash = claimToken is null ? null : ClaimToken.Hash(claimToken),
 
             // A staff upload skips the queue, so the decision is made here and now.
             ReviewedAt = initialStatus == PaperStatus.Pending ? null : DateTime.UtcNow
@@ -199,7 +186,7 @@ public sealed class PaperSubmissionService
             throw;
         }
 
-        return PaperSubmissionResult.Success(paper, claimToken);
+        return PaperSubmissionResult.Success(paper);
     }
 
     // Returns the resolved format of each file, positionally, or null if any failed.

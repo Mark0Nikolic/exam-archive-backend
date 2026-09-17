@@ -135,15 +135,6 @@ public class ExamArchiveDbContext : DbContext
             entity.Property(p => p.RejectionReason)
                 .HasMaxLength(500);
 
-            // Hex SHA-256, so always exactly 64 characters when present.
-            entity.Property(p => p.ClaimTokenHash)
-                .HasMaxLength(64);
-
-            // NULLs are distinct from one another, so staff uploads and everything
-            // predating this column are exempt from the uniqueness.
-            entity.HasIndex(p => p.ClaimTokenHash)
-                .IsUnique();
-
             // Restrict: a subject cannot be deleted while it still has papers.
             entity.HasOne(p => p.Subject)
                 .WithMany(s => s.Papers)

@@ -167,8 +167,11 @@ public sealed class PapersControllerTests
 
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Login"));
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Register"));
-        Assert.NotEmpty(
-            Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetSubmissionStatus"));
+
+        Assert.Null(typeof(PapersController).GetMethod(
+            "GetMySubmissions", BindingFlags.Instance | BindingFlags.Public));
+        Assert.Null(typeof(PapersController).GetMethod(
+            "GetSubmissionStatus", BindingFlags.Instance | BindingFlags.Public));
     }
 
     private static TAttribute[] Attributes<TAttribute>(Type controller, string methodName)

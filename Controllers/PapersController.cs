@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExamArchive.Controllers;
 
-// Everything the archive does with papers: browsing, submitting, checking on a
-// submission, and — for staff — reviewing and deciding.
+// Everything the archive does with papers: browsing, submitting, and — for staff —
+// reviewing and deciding.
 //
 // One controller for one resource, so it cannot default to "staff only": the
 // class-level attribute is the weaker [Authorize], and an endpoint added here
@@ -377,97 +377,12 @@ public class PapersController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        if (!isStaff)
-        {
-            // 201 without a Location header: a pending paper has no address yet, and
-            // GET on its id would 404 for the very account that just created it.
-            return StatusCode(
-                StatusCodes.Status201Created,
-                UploadedPaperDto.From(result.Paper!, result.ClaimToken));
-        }
-
-        // A staff upload is approved, so it is already reachable. No claim code —
-        // they can see it in the archive.
+        // The submitter can open their own pending paper, so Location is valid for
+        // every successful upload — not only a staff one that is already public.
         return CreatedAtAction(
             nameof(GetPaper),
             new { id = result.Paper!.Id },
             UploadedPaperDto.From(result.Paper));
-    }
-
-    // Kept as a dedicated submission-history endpoint for existing clients even
-    // though the main list now includes a caller's own pending and rejected rows.
-    // Not a leak of the review queue: the filter is still the caller's own id.
-    [HttpGet("mine")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<ActionResult<PagedResult<SubmissionStatusDto>>> GetMySubmissions(
-        [FromQuery] PageRequest paging,
-        CancellationToken cancellationToken)
-    {
-        var userId = User.GetUserId();
-
-        if (userId is null)
-        {
-            return Unauthorized();
-        }
-
-        // Backed by IX_Papers_SubmittedByUserId.
-        var submissions = await _db.Papers
-            .AsNoTracking()
-            .Where(p => p.SubmittedByUserId == userId)
-            .OrderByDescending(p => p.UploadedAt)
-            .ThenByDescending(p => p.Id)
-            .Select(p => new SubmissionStatusDto(
-                p.Id,
-                p.Subject!.NameSr,
-                p.ExamType,
-                p.Month,
-                p.Year,
-                p.UploadedAt,
-                p.Status,
-                p.ReviewedAt,
-                p.RejectionReason))
-            .ToPagedResultAsync(paging, cancellationToken);
-
-        return Ok(submissions);
-    }
-
-    // The route for a submitter who has the claim code but is not signed in on the
-    // device they are asking from; GetMySubmissions is the one for an account.
-    //
-    // The code is the only credential, so anyone holding it sees this. Acceptable
-    // because of how little it reveals, and it hands over nothing from the paper
-    // itself — GetPaper still answers 404 for an unapproved paper unless staff.
-    [HttpGet("status/{token}")]
-    [AllowAnonymous]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<SubmissionStatusDto>> GetSubmissionStatus(
-        string token,
-        CancellationToken cancellationToken)
-    {
-        // Hashed before it touches the query, so the lookup is an index seek and the
-        // code itself never appears in a logged parameter or a query plan.
-        var hash = ClaimToken.Hash(token);
-
-        var submission = await _db.Papers
-            .AsNoTracking()
-            .Where(p => p.ClaimTokenHash == hash)
-            .Select(p => new SubmissionStatusDto(
-                p.Id,
-                p.Subject!.NameSr,
-                p.ExamType,
-                p.Month,
-                p.Year,
-                p.UploadedAt,
-                p.Status,
-                p.ReviewedAt,
-                p.RejectionReason))
-            .FirstOrDefaultAsync(cancellationToken);
-
-        // A malformed code and a well-formed one that matches nothing get the same
-        // answer: validating the shape first would confirm the format to a prober.
-        return submission is null ? NotFound() : Ok(submission);
     }
 
     // Also reverses a rejection, which clears the stored reason. Approving a paper

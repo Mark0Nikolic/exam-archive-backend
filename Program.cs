@@ -71,7 +71,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             ? SameSiteMode.None
             : SameSiteMode.Lax;
 
-        options.ExpireTimeSpan = TimeSpan.FromDays(7);
+        options.ExpireTimeSpan = TimeSpan.FromHours(12);
         options.SlidingExpiration = true;
 
         // Without these the handler answers an unauthenticated API call with a 302 to a

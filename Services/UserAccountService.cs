@@ -32,9 +32,9 @@ public sealed class UserAccountService
     // which is why the change-password endpoint re-issues the cookie immediately.
     public const string MustChangePasswordClaim = "exam-archive:must-change-password";
 
-    // Same idea as ClaimToken and deliberately not the same code: the two have
-    // different rules, so sharing an implementation would mean one change quietly
-    // altering the other.
+    // Crockford's base32: digits and uppercase letters, minus I, L, O and U, so a
+    // temporary password can be read aloud and typed back without those confusable
+    // characters.
     private const string TemporaryPasswordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
     private readonly ExamArchiveDbContext _db;
