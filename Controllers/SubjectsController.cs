@@ -83,6 +83,71 @@ public class SubjectsController : ControllerBase
         return Ok(subjects);
     }
 
+    [HttpGet("catalogue")]
+    [Authorize(Policy = RolePolicies.Administrators)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<PagedResult<CatalogueSubjectDto>>> GetCatalogueSubjects(
+        [FromQuery, StringLength(200)] string? search,
+        [FromQuery] PageRequest paging,
+        CancellationToken cancellationToken)
+    {
+        var query = _db.Subjects.AsNoTracking();
+        var term = search?.Trim();
+
+        if (!string.IsNullOrEmpty(term))
+        {
+            query = query.Where(subject =>
+                (subject.Code != null && subject.Code.Contains(term))
+                || subject.NameSr.Contains(term)
+                || (subject.NameEn != null && subject.NameEn.Contains(term)));
+        }
+
+        var subjectPage = await query
+            .OrderBy(subject => subject.Code ?? subject.NameSr)
+            .ThenBy(subject => subject.Id)
+            .ToPagedResultAsync(paging, cancellationToken);
+
+        var subjectIds = subjectPage.Data.Select(subject => subject.Id).ToArray();
+        var placements = await _db.MajorSubjects
+            .AsNoTracking()
+            .Where(link => subjectIds.Contains(link.SubjectId))
+            .OrderBy(link => link.Major!.StudiesId)
+            .ThenBy(link => link.MajorId)
+            .Select(link => new
+            {
+                link.SubjectId,
+                Placement = new SubjectPlacementDto(
+                    link.MajorId,
+                    link.Major!.NameSr,
+                    link.Major.NameEn,
+                    link.Major.StudiesId,
+                    link.Major.Studies!.NameSr,
+                    link.Major.Studies.NameEn,
+                    link.YearOfStudy)
+            })
+            .ToListAsync(cancellationToken);
+
+        var placementsBySubject = placements
+            .GroupBy(item => item.SubjectId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<SubjectPlacementDto>)group
+                    .Select(item => item.Placement)
+                    .ToList());
+
+        var data = subjectPage.Data
+            .Select(subject => new CatalogueSubjectDto(
+                subject.Id,
+                subject.Code,
+                subject.NameSr,
+                subject.NameEn,
+                placementsBySubject.GetValueOrDefault(subject.Id, [])))
+            .ToList();
+
+        return Ok(new PagedResult<CatalogueSubjectDto>(data, subjectPage.Meta));
+    }
+
     // Subjects that are not taught in any major: a course the curriculum dropped,
     // still sitting in the catalogue (and possibly still holding papers). Year of
     // study is a pairing property, so it is 0 here.

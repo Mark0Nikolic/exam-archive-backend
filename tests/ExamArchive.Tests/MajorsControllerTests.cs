@@ -95,6 +95,40 @@ public sealed class MajorsControllerTests
     }
 
     [Fact]
+    public async Task DuplicateSubjectAttachmentReturnsConflict()
+    {
+        await using var db = await SeedAsync();
+
+        var action = await CreateController(db).AttachSubject(
+            1,
+            new AttachSubjectRequest { SubjectId = 1, YearOfStudy = 3 },
+            CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task MovingMajorToShorterStudiesReturnsConflict()
+    {
+        await using var db = await SeedAsync();
+
+        var action = await CreateController(db).UpdateMajor(
+            1,
+            new SaveMajorRequest
+            {
+                NameSr = "Рачунарске науке",
+                NameEn = "Computer Science",
+                StudiesId = 2
+            },
+            CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+        Assert.Equal(1, (await db.Majors.SingleAsync(major => major.Id == 1)).StudiesId);
+    }
+
+    [Fact]
     public async Task DetachSubjectFromOneMajorLeavesTheOtherLinkAndPapers()
     {
         await using var db = await SeedAsync();

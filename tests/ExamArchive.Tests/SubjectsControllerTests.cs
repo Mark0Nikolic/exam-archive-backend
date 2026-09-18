@@ -1,8 +1,10 @@
+using System.Reflection;
 using ExamArchive.Controllers;
 using ExamArchive.Data;
 using ExamArchive.Dtos;
 using ExamArchive.Models;
 using ExamArchive.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -192,6 +194,89 @@ public sealed class SubjectsControllerTests
         var subject = Assert.Single(result.Data);
         Assert.Equal(1, subject.Id);
         Assert.Equal(0, subject.YearOfStudy);
+    }
+
+    [Fact]
+    public async Task CatalogueListsAttachedAndUnattachedSubjectsWithPlacements()
+    {
+        await using var db = await SeedCurriculumAsync();
+        db.Subjects.Add(new Subject
+        {
+            Id = 2,
+            Code = "FREE",
+            NameSr = "Слободан",
+            NameEn = "Unattached"
+        });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, UserRole.Admin).GetCatalogueSubjects(
+            search: null,
+            new PageRequest { PerPage = 100 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var result = Assert.IsType<PagedResult<CatalogueSubjectDto>>(ok.Value);
+        Assert.Equal(2, result.Data.Count);
+        Assert.Empty(result.Data.Single(subject => subject.Id == 2).Placements);
+        var placement = Assert.Single(result.Data.Single(subject => subject.Id == 1).Placements);
+        Assert.Equal(1, placement.MajorId);
+        Assert.Equal(1, placement.StudiesId);
+        Assert.Equal(3, placement.YearOfStudy);
+    }
+
+    [Fact]
+    public async Task CatalogueSearchMatchesCodeAndName()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        var action = await CreateController(db, UserRole.Admin).GetCatalogueSubjects(
+            search: "TEST",
+            new PageRequest { PerPage = 100 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var result = Assert.IsType<PagedResult<CatalogueSubjectDto>>(ok.Value);
+        Assert.Equal(1, Assert.Single(result.Data).Id);
+    }
+
+    [Fact]
+    public void CatalogueEndpointRequiresAdministratorPolicy()
+    {
+        var method = typeof(SubjectsController).GetMethod(
+            nameof(SubjectsController.GetCatalogueSubjects),
+            BindingFlags.Instance | BindingFlags.Public);
+
+        var authorize = Assert.Single(method!.GetCustomAttributes<AuthorizeAttribute>());
+        Assert.Equal(RolePolicies.Administrators, authorize.Policy);
+    }
+
+    [Fact]
+    public async Task UpdateSubjectChangesIdentityAndOnePlacementYear()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        var action = await CreateController(db, UserRole.Admin).UpdateSubject(
+            1,
+            new UpdateSubjectRequest
+            {
+                Code = "UPDATED",
+                NameSr = "Измењен",
+                NameEn = "Updated",
+                MajorId = 1,
+                YearOfStudy = 2
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var subject = Assert.IsType<SubjectDto>(ok.Value);
+        Assert.Equal("UPDATED", subject.Code);
+        Assert.Equal(2, subject.YearOfStudy);
+        Assert.Equal(
+            2,
+            await db.MajorSubjects
+                .Where(link => link.MajorId == 1 && link.SubjectId == 1)
+                .Select(link => link.YearOfStudy)
+                .SingleAsync());
     }
 
     private static async Task<ExamArchiveDbContext> SeedCurriculumAsync()
