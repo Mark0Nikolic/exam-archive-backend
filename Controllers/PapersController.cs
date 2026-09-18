@@ -681,6 +681,7 @@ public class PapersController : ControllerBase
         // to save would leave rows pointing at nothing; this order can at worst leave
         // bytes with no row, which is only wasted disk.
         _storage.TryDeleteOrphans(storedPaths, _logger);
+        _pdfs.TryDeleteCache(id);
 
         _logger.LogInformation(
             "{Admin} deleted paper {PaperId} and its {FileCount} file(s).",

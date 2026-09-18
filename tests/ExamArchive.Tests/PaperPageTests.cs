@@ -34,6 +34,7 @@ public sealed class PaperPageTests : IDisposable
         var file = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
         Assert.True(file.EnableRangeProcessing);
+        Assert.True(file.EnableRangeProcessing);
         Assert.Contains("inline", controller.Response.Headers.ContentDisposition.ToString());
         Assert.Contains("test-final-2024-06.pdf", controller.Response.Headers.ContentDisposition.ToString());
     }
@@ -130,10 +131,10 @@ public sealed class PaperPageTests : IDisposable
 
         var result = await controller.PreviewPaper(1, CancellationToken.None);
 
-        var file = Assert.IsType<FileStreamResult>(result);
+        var file = Assert.IsType<PhysicalFileResult>(result);
         Assert.Equal("application/pdf", file.ContentType);
         Assert.Contains("inline", controller.Response.Headers.ContentDisposition.ToString());
-        await using var stream = file.FileStream;
+        await using var stream = File.OpenRead(file.FileName);
         using var copy = new MemoryStream();
         await stream.CopyToAsync(copy);
         copy.Position = 0;
@@ -149,10 +150,10 @@ public sealed class PaperPageTests : IDisposable
 
         var result = await controller.DownloadPaper(1, CancellationToken.None);
 
-        var file = Assert.IsType<FileStreamResult>(result);
+        var file = Assert.IsType<PhysicalFileResult>(result);
         Assert.Contains("attachment", controller.Response.Headers.ContentDisposition.ToString());
         Assert.Contains("test-final-2024-06.pdf", controller.Response.Headers.ContentDisposition.ToString());
-        await file.FileStream.DisposeAsync();
+        Assert.True(File.Exists(file.FileName));
     }
 
     [Fact]
@@ -166,8 +167,8 @@ public sealed class PaperPageTests : IDisposable
 
         var result = await controller.PreviewPaper(1, CancellationToken.None);
 
-        var file = Assert.IsType<FileStreamResult>(result);
-        await using var stream = file.FileStream;
+        var file = Assert.IsType<PhysicalFileResult>(result);
+        await using var stream = File.OpenRead(file.FileName);
         using var copy = new MemoryStream();
         await stream.CopyToAsync(copy);
         copy.Position = 0;
@@ -185,6 +186,46 @@ public sealed class PaperPageTests : IDisposable
 
         var forbidden = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task MetadataChangesReuseTheSameCachedPdf()
+    {
+        await using var db = await SeedPaperAsync(PaperStatus.Approved, submittedByUserId: 10);
+        var controller = CreateController(db, userId: 11, UserRole.Admin);
+        var first = Assert.IsType<PhysicalFileResult>(
+            await controller.PreviewPaper(1, CancellationToken.None));
+
+        await controller.UpdatePaper(
+            1,
+            new UpdatePaperRequest
+            {
+                SubjectId = 1,
+                ExamType = ExamType.Midterm,
+                Month = 2,
+                Year = 2025
+            },
+            CancellationToken.None);
+        var second = Assert.IsType<PhysicalFileResult>(
+            await controller.PreviewPaper(1, CancellationToken.None));
+
+        Assert.Equal(first.FileName, second.FileName);
+        Assert.Contains("test-midterm-2025-02.pdf", controller.Response.Headers.ContentDisposition.ToString());
+    }
+
+    [Fact]
+    public async Task DeletingPaperRemovesItsCachedPdf()
+    {
+        await using var db = await SeedPaperAsync(PaperStatus.Approved, submittedByUserId: 10);
+        var controller = CreateController(db, userId: 11, UserRole.Admin);
+        var preview = Assert.IsType<PhysicalFileResult>(
+            await controller.PreviewPaper(1, CancellationToken.None));
+        var cacheDirectory = Path.GetDirectoryName(preview.FileName)!;
+
+        var result = await controller.DeletePaper(1, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.False(Directory.Exists(cacheDirectory));
     }
 
     public void Dispose()
@@ -274,13 +315,21 @@ public sealed class PaperPageTests : IDisposable
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Storage:UploadsRoot"] = _uploads
+                ["Storage:UploadsRoot"] = _uploads,
+                ["Storage:GeneratedRoot"] = Path.Combine(_uploads, "generated")
             })
             .Build();
 
-        var storage = new PaperFileStorage(new StubHostEnvironment(_uploads), configuration);
+        var environment = new StubHostEnvironment(_uploads);
+        var storage = new PaperFileStorage(environment, configuration);
         var files = new PaperFileServer(db, storage, NullLogger<PaperFileServer>.Instance);
-        var pdfs = new PaperPdfServer(db, storage, NullLogger<PaperPdfServer>.Instance);
+        var cache = new PaperPdfCache(environment, configuration, NullLogger<PaperPdfCache>.Instance);
+        var pdfs = new PaperPdfServer(
+            db,
+            storage,
+            new PaperPdfComposer(),
+            cache,
+            NullLogger<PaperPdfServer>.Instance);
         var user = new User { Id = userId, Username = $"user-{userId}", Role = role };
 
         return new PapersController(

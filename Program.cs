@@ -40,6 +40,8 @@ builder.Services.AddDbContext<ExamArchiveDbContext>(options =>
 
 builder.Services.AddSingleton<PaperFileStorage>();
 builder.Services.AddScoped<PaperFileServer>();
+builder.Services.AddSingleton<PaperPdfComposer>();
+builder.Services.AddSingleton<IPaperPdfCache, PaperPdfCache>();
 builder.Services.AddScoped<PaperPdfServer>();
 builder.Services.AddSingleton<ImageSanitizer>();
 builder.Services.AddScoped<PaperSubmissionService>();

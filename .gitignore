@@ -19,6 +19,7 @@ backups/
 
 ## ===== Uploaded papers (user content, not source) =====
 uploads/
+generated/
 
 ## ===== React / Node =====
 node_modules/
