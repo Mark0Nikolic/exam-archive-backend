@@ -141,6 +141,59 @@ public sealed class SubjectsControllerTests
         Assert.False(await db.MajorSubjects.AnyAsync(ms => ms.SubjectId == 1));
     }
 
+    [Fact]
+    public async Task UnattachedListIncludesOrphansAndExcludesTaughtSubjects()
+    {
+        await using var db = await SeedCurriculumAsync();
+        db.Subjects.Add(new Subject
+        {
+            Id = 2,
+            Code = "DEAD",
+            NameSr = "Укинути предмет",
+            NameEn = "Dropped"
+        });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, UserRole.Admin).GetUnattachedSubjects(
+            new PageRequest { PerPage = 100 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var result = Assert.IsType<PagedResult<SubjectDto>>(ok.Value);
+        var subject = Assert.Single(result.Data);
+        Assert.Equal(2, subject.Id);
+        Assert.Equal(0, subject.YearOfStudy);
+    }
+
+    [Fact]
+    public async Task LastDetachMovesTheSubjectOntoTheUnattachedList()
+    {
+        await using var db = await SeedCurriculumAsync();
+
+        Assert.IsType<NoContentResult>(
+            await new MajorsController(db, NullLogger<MajorsController>.Instance)
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext
+                    {
+                        User = UserAccountService.BuildPrincipal(
+                            new User { Id = 1, Username = "admin", Role = UserRole.Admin })
+                    }
+                }
+            }.DetachSubject(1, 1, CancellationToken.None));
+
+        var action = await CreateController(db, UserRole.Admin).GetUnattachedSubjects(
+            new PageRequest { PerPage = 100 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var result = Assert.IsType<PagedResult<SubjectDto>>(ok.Value);
+        var subject = Assert.Single(result.Data);
+        Assert.Equal(1, subject.Id);
+        Assert.Equal(0, subject.YearOfStudy);
+    }
+
     private static async Task<ExamArchiveDbContext> SeedCurriculumAsync()
     {
         var db = CreateDatabase();
@@ -182,9 +235,11 @@ public sealed class SubjectsControllerTests
         return new ExamArchiveDbContext(options);
     }
 
-    private static SubjectsController CreateController(ExamArchiveDbContext db)
+    private static SubjectsController CreateController(
+        ExamArchiveDbContext db,
+        UserRole role = UserRole.User)
     {
-        var user = new User { Id = 1, Username = "tester", Role = UserRole.User };
+        var user = new User { Id = 1, Username = "tester", Role = role };
 
         return new SubjectsController(db, NullLogger<SubjectsController>.Instance)
         {

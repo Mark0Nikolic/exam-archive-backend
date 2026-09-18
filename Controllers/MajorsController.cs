@@ -177,7 +177,8 @@ public class MajorsController : ControllerBase
 
     // Places an existing subject into this major's curriculum. Creating the subject
     // itself is POST /api/subjects; this is how the same course appears in a second
-    // set. Unlinking without deleting either side is a later endpoint.
+    // set. DELETE /api/majors/{id}/subjects/{subjectId} unlinks without deleting
+    // either side.
     [HttpPost("{id:int}/subjects")]
     [Authorize(Policy = RolePolicies.Administrators)]
     [ProducesResponseType(StatusCodes.Status201Created)]
@@ -262,6 +263,37 @@ public class MajorsController : ControllerBase
             "Subjects",
             new { majorId = id },
             dto);
+    }
+
+    [HttpDelete("{id:int}/subjects/{subjectId:int}")]
+    [Authorize(Policy = RolePolicies.Administrators)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DetachSubject(
+        int id,
+        int subjectId,
+        CancellationToken cancellationToken)
+    {
+        var link = await _db.MajorSubjects.FirstOrDefaultAsync(
+            ms => ms.MajorId == id && ms.SubjectId == subjectId,
+            cancellationToken);
+
+        if (link is null)
+        {
+            return NotFound();
+        }
+
+        _db.MajorSubjects.Remove(link);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "{Admin} removed subject {SubjectId} from major {MajorId}.",
+            User.Identity?.Name,
+            subjectId,
+            id);
+
+        return NoContent();
     }
 
     private Task<bool> StudiesExistsAsync(int studiesId, CancellationToken cancellationToken) =>

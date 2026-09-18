@@ -209,13 +209,16 @@ Accept: application/json
 
 ### One approved paper with its pages. The pages arrive grouped by format under "files" —
 ### {"pdf": [...], "jpg": [...]} — with one array per format the paper actually
-### has, so a missing key and an empty array mean the same thing.
-###
-### NOTE: nothing serves the file bytes any more. /api/papers/{id}/files and
-### /api/papers/{id}/files/{pageNumber} were both removed, and this response
-### describes the pages without handing any of them over.
+### has, so a missing key and an empty array mean the same thing. Each page carries
+### a relative "url" such as /api/papers/1/pages/1.
 GET {{ExamArchive_HostAddress}}/api/papers/1
 Accept: application/json
+
+### Preview page 1 inline (Content-Disposition: inline). Same visibility as the paper.
+GET {{ExamArchive_HostAddress}}/api/papers/1/pages/1
+
+### Save As — Content-Disposition: attachment, reconstructed filename
+GET {{ExamArchive_HostAddress}}/api/papers/1/pages/1?download=true
 
 ### Check a submission without a login using the claim code from the upload response.
 ### Replace the code below with the "claimToken" the upload actually returned —
@@ -264,6 +267,15 @@ POST {{ExamArchive_HostAddress}}/api/users/3/deactivate
 ### Somebody came back. The password is untouched.
 POST {{ExamArchive_HostAddress}}/api/users/3/activate
 
+### Curriculum: drop Mathematics I (id 1) from Computer Science (id 1) without
+### deleting the subject. 204. If that was its last major it appears on unattached.
+DELETE {{ExamArchive_HostAddress}}/api/majors/1/subjects/1
+
+### Discontinued courses — re-attach with POST /api/majors/{id}/subjects, or
+### DELETE /api/subjects/{id} once they have no papers.
+GET {{ExamArchive_HostAddress}}/api/subjects/unattached
+Accept: application/json
+
 ### ==================== Review (Moderator or Admin) ====================
 ### These are the same /api/papers routes as above — there is no separate
 ### moderation prefix any more. What changes is the role on the session cookie:
@@ -284,8 +296,8 @@ Accept: application/json
 GET {{ExamArchive_HostAddress}}/api/papers/28
 Accept: application/json
 
-### A reviewer can see what a submission is made of — page count, formats, sizes —
-### but not open any of it, now that the byte-serving route is gone.
+### Preview a pending page — staff, or the submitter. Same 403/404 as the paper.
+GET {{ExamArchive_HostAddress}}/api/papers/28/pages/1
 
 ### Approve a paper — it becomes visible to everyone, signed in or not
 POST {{ExamArchive_HostAddress}}/api/papers/28/approve

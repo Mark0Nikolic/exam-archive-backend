@@ -248,6 +248,7 @@ public sealed class PapersControllerTests
 
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPapers"));
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPaper"));
+        Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPage"));
 
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Login"));
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Register"));
@@ -321,12 +322,14 @@ public sealed class PapersControllerTests
     private static PapersController CreateController(
         ExamArchiveDbContext db,
         int userId,
-        UserRole role)
+        UserRole role,
+        PaperFileServer files = null!)
     {
         var user = new User { Id = userId, Username = $"user-{userId}", Role = role };
         var controller = new PapersController(
             db,
             storage: null!,
+            files: files,
             submissions: null!,
             NullLogger<PapersController>.Instance)
         {

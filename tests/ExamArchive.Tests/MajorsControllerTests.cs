@@ -94,6 +94,67 @@ public sealed class MajorsControllerTests
         Assert.True(await db.MajorSubjects.AnyAsync(ms => ms.MajorId == 2 && ms.SubjectId == 1));
     }
 
+    [Fact]
+    public async Task DetachSubjectFromOneMajorLeavesTheOtherLinkAndPapers()
+    {
+        await using var db = await SeedAsync();
+        db.Majors.Add(new Major
+        {
+            Id = 2,
+            NameSr = "Други",
+            NameEn = "Other",
+            StudiesId = 1
+        });
+        db.MajorSubjects.Add(new MajorSubject { MajorId = 2, SubjectId = 1, YearOfStudy = 2 });
+        db.Papers.Add(PaperOnSubject(1));
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db).DetachSubject(1, 1, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(action);
+        Assert.False(await db.MajorSubjects.AnyAsync(ms => ms.MajorId == 1 && ms.SubjectId == 1));
+        Assert.True(await db.MajorSubjects.AnyAsync(ms => ms.MajorId == 2 && ms.SubjectId == 1));
+        Assert.True(await db.Subjects.AnyAsync(s => s.Id == 1));
+        Assert.True(await db.Papers.AnyAsync(p => p.SubjectId == 1));
+    }
+
+    [Fact]
+    public async Task DetachSubjectFromItsLastMajorLeavesTheSubjectAndPapers()
+    {
+        await using var db = await SeedAsync();
+        db.Papers.Add(PaperOnSubject(1));
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db).DetachSubject(1, 1, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(action);
+        Assert.False(await db.MajorSubjects.AnyAsync(ms => ms.SubjectId == 1));
+        Assert.True(await db.Subjects.AnyAsync(s => s.Id == 1));
+        Assert.True(await db.Papers.AnyAsync(p => p.SubjectId == 1));
+
+        var remaining = await new SubjectsController(db, NullLogger<SubjectsController>.Instance)
+            .GetSubjects(
+                majorId: 1,
+                yearOfStudy: null,
+                paging: new PageRequest { PerPage = 100 },
+                cancellationToken: CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(remaining.Result);
+        var page = Assert.IsType<PagedResult<SubjectDto>>(ok.Value);
+        Assert.Empty(page.Data);
+    }
+
+    [Fact]
+    public async Task DetachMissingLinkReturnsNotFound()
+    {
+        await using var db = await SeedAsync();
+
+        var action = await CreateController(db).DetachSubject(1, 999, CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(action);
+        Assert.True(await db.MajorSubjects.AnyAsync(ms => ms.MajorId == 1 && ms.SubjectId == 1));
+    }
+
     private static async Task<ExamArchiveDbContext> SeedAsync()
     {
         var db = CreateDatabase();

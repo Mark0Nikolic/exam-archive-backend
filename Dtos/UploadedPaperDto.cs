@@ -22,5 +22,9 @@ public record UploadedPaperDto(
         paper.Status,
         [.. paper.Files
             .OrderBy(f => f.PageNumber)
-            .Select(f => new PaperFileDto(f.PageNumber, f.ContentType, f.SizeBytes))]);
+            .Select(f => new PaperFileDto(
+                f.PageNumber,
+                f.ContentType,
+                f.SizeBytes,
+                PaperFileDto.PageUrl(paper.Id, f.PageNumber)))]);
 }

@@ -1,4 +1,5 @@
 using ExamArchive.Data;
+using ExamArchive.Dtos;
 using ExamArchive.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -24,20 +25,24 @@ public sealed class PaperFileServer
         _logger = logger;
     }
 
-    // approvedOnly is true for the public API, where a pending paper must be
-    // indistinguishable from one that does not exist.
+    // Visibility matches GetPaper: staff see every paper; everyone else sees
+    // approved papers and their own pending or rejected submissions.
     public async Task<IActionResult> ServeAsync(
         HttpResponse response,
         int paperId,
         int pageNumber,
-        bool approvedOnly,
+        bool includeUnapproved,
+        int? ownedByUserId,
         bool asAttachment,
         CancellationToken cancellationToken)
     {
         var page = await _db.PaperFiles
             .AsNoTracking()
             .Where(f => f.PaperId == paperId && f.PageNumber == pageNumber)
-            .Where(f => !approvedOnly || f.Paper!.Status == PaperStatus.Approved)
+            .Where(f =>
+                includeUnapproved
+                || f.Paper!.Status == PaperStatus.Approved
+                || (ownedByUserId != null && f.Paper.SubmittedByUserId == ownedByUserId))
             .Select(f => new
             {
                 f.StoredPath,
@@ -53,7 +58,14 @@ public sealed class PaperFileServer
 
         if (page is null)
         {
-            return new NotFoundResult();
+            var exists = await _db.Papers
+                .AsNoTracking()
+                .AnyAsync(p => p.Id == paperId, cancellationToken);
+
+            return exists && !await IsVisibleAsync(
+                    paperId, includeUnapproved, ownedByUserId, cancellationToken)
+                ? AccessDenied()
+                : new NotFoundResult();
         }
 
         if (!_storage.TryResolve(page.StoredPath, out var absolutePath))
@@ -94,27 +106,53 @@ public sealed class PaperFileServer
     }
 
     // Null when the paper is not visible to this caller.
-    public async Task<List<Dtos.PaperFileDto>?> ListAsync(
+    public async Task<List<PaperFileDto>?> ListAsync(
         int paperId,
-        bool approvedOnly,
+        bool includeUnapproved,
+        int? ownedByUserId,
         CancellationToken cancellationToken)
     {
-        var visible = await _db.Papers
-            .AsNoTracking()
-            .AnyAsync(
-                p => p.Id == paperId && (!approvedOnly || p.Status == PaperStatus.Approved),
-                cancellationToken);
-
-        if (!visible)
+        if (!await IsVisibleAsync(paperId, includeUnapproved, ownedByUserId, cancellationToken))
         {
             return null;
         }
 
-        return await _db.PaperFiles
+        var files = await _db.PaperFiles
             .AsNoTracking()
             .Where(f => f.PaperId == paperId)
             .OrderBy(f => f.PageNumber)
-            .Select(f => new Dtos.PaperFileDto(f.PageNumber, f.ContentType, f.SizeBytes))
+            .Select(f => new { f.PageNumber, f.ContentType, f.SizeBytes })
             .ToListAsync(cancellationToken);
+
+        return [.. files.Select(f => new PaperFileDto(
+            f.PageNumber,
+            f.ContentType,
+            f.SizeBytes,
+            PaperFileDto.PageUrl(paperId, f.PageNumber)))];
     }
+
+    private Task<bool> IsVisibleAsync(
+        int paperId,
+        bool includeUnapproved,
+        int? ownedByUserId,
+        CancellationToken cancellationToken) =>
+        _db.Papers
+            .AsNoTracking()
+            .AnyAsync(
+                p => p.Id == paperId
+                    && (includeUnapproved
+                        || p.Status == PaperStatus.Approved
+                        || (ownedByUserId != null && p.SubmittedByUserId == ownedByUserId)),
+                cancellationToken);
+
+    private static ObjectResult AccessDenied() =>
+        new(new ProblemDetails
+        {
+            Title = "Paper access denied",
+            Detail = "You may open approved papers and your own submissions only.",
+            Status = StatusCodes.Status403Forbidden
+        })
+        {
+            StatusCode = StatusCodes.Status403Forbidden
+        };
 }

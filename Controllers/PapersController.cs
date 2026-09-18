@@ -28,17 +28,20 @@ public class PapersController : ControllerBase
 {
     private readonly ExamArchiveDbContext _db;
     private readonly PaperFileStorage _storage;
+    private readonly PaperFileServer _files;
     private readonly PaperSubmissionService _submissions;
     private readonly ILogger<PapersController> _logger;
 
     public PapersController(
         ExamArchiveDbContext db,
         PaperFileStorage storage,
+        PaperFileServer files,
         PaperSubmissionService submissions,
         ILogger<PapersController> logger)
     {
         _db = db;
         _storage = storage;
+        _files = files;
         _submissions = submissions;
         _logger = logger;
     }
@@ -378,6 +381,38 @@ public class PapersController : ControllerBase
             : NotFound();
     }
 
+    // Preview is the default (Content-Disposition: inline). ?download=true is the
+    // Save As path. Visibility is the same as GetPaper, so a submitter who can open
+    // the JSON can also open the pages.
+    [HttpGet("{id:int}/pages/{pageNumber:int}")]
+    [Produces("application/pdf", "image/jpeg", "image/png", "image/webp")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPage(
+        int id,
+        [Range(1, int.MaxValue, ErrorMessage = "PageNumber must be at least 1.")]
+        int pageNumber,
+        [FromQuery] bool download = false,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = User.GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        return await _files.ServeAsync(
+            Response,
+            id,
+            pageNumber,
+            includeUnapproved: User.IsStaff(),
+            ownedByUserId: userId.Value,
+            asAttachment: download,
+            cancellationToken);
+    }
+
     // Staff submissions are published at once; everyone else's wait in the queue. A
     // professor adding a paper is the same authority that would have approved it,
     // whereas an ordinary account proves somebody can be held to a submission, not
@@ -613,7 +648,7 @@ public class PapersController : ControllerBase
                 p.RejectionReason,
                 Files = p.Files
                     .OrderBy(f => f.PageNumber)
-                    .Select(f => new PaperFileDto(f.PageNumber, f.ContentType, f.SizeBytes))
+                    .Select(f => new { f.PageNumber, f.ContentType, f.SizeBytes })
                     .ToList()
             })
             .FirstOrDefaultAsync(cancellationToken);
@@ -636,6 +671,10 @@ public class PapersController : ControllerBase
             paper.Status,
             paper.ReviewedAt,
             paper.RejectionReason,
-            new PaperFilesDto(paper.Files));
+            new PaperFilesDto(paper.Files.Select(f => new PaperFileDto(
+                f.PageNumber,
+                f.ContentType,
+                f.SizeBytes,
+                PaperFileDto.PageUrl(paper.Id, f.PageNumber)))));
     }
 }

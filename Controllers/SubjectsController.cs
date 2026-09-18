@@ -83,6 +83,27 @@ public class SubjectsController : ControllerBase
         return Ok(subjects);
     }
 
+    // Subjects that are not taught in any major: a course the curriculum dropped,
+    // still sitting in the catalogue (and possibly still holding papers). Year of
+    // study is a pairing property, so it is 0 here.
+    [HttpGet("unattached")]
+    [Authorize(Policy = RolePolicies.Administrators)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<PagedResult<SubjectDto>>> GetUnattachedSubjects(
+        [FromQuery] PageRequest paging,
+        CancellationToken cancellationToken)
+    {
+        var subjects = await _db.Subjects
+            .AsNoTracking()
+            .Where(s => !s.MajorSubjects.Any())
+            .OrderBy(s => s.Id)
+            .Select(s => new SubjectDto(s.Id, s.Code, s.NameSr, s.NameEn, 0))
+            .ToPagedResultAsync(paging, cancellationToken);
+
+        return Ok(subjects);
+    }
+
     [HttpPost]
     [Authorize(Policy = RolePolicies.Administrators)]
     [ProducesResponseType(StatusCodes.Status201Created)]
