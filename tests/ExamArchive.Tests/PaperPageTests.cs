@@ -10,6 +10,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using PdfSharp.Pdf;
+using PdfSharp.Pdf.IO;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace ExamArchive.Tests;
 
@@ -118,6 +122,71 @@ public sealed class PaperPageTests : IDisposable
         Assert.Equal("/api/papers/1/pages/1", page.Url);
     }
 
+    [Fact]
+    public async Task CombinedPreviewReturnsAnInlinePdf()
+    {
+        await using var db = await SeedPaperAsync(PaperStatus.Approved, submittedByUserId: 10);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.PreviewPaper(1, CancellationToken.None);
+
+        var file = Assert.IsType<FileStreamResult>(result);
+        Assert.Equal("application/pdf", file.ContentType);
+        Assert.Contains("inline", controller.Response.Headers.ContentDisposition.ToString());
+        await using var stream = file.FileStream;
+        using var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+        copy.Position = 0;
+        using var pdf = PdfReader.Open(copy, PdfDocumentOpenMode.Import);
+        Assert.Single(pdf.Pages);
+    }
+
+    [Fact]
+    public async Task CombinedDownloadUsesAnAttachmentDisposition()
+    {
+        await using var db = await SeedPaperAsync(PaperStatus.Approved, submittedByUserId: 10);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.DownloadPaper(1, CancellationToken.None);
+
+        var file = Assert.IsType<FileStreamResult>(result);
+        Assert.Contains("attachment", controller.Response.Headers.ContentDisposition.ToString());
+        Assert.Contains("test-final-2024-06.pdf", controller.Response.Headers.ContentDisposition.ToString());
+        await file.FileStream.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CombinedPreviewConvertsImagesAndPreservesFileOrder()
+    {
+        await using var db = await SeedPaperAsync(
+            PaperStatus.Approved,
+            submittedByUserId: 10,
+            includeImage: true);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.PreviewPaper(1, CancellationToken.None);
+
+        var file = Assert.IsType<FileStreamResult>(result);
+        await using var stream = file.FileStream;
+        using var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+        copy.Position = 0;
+        using var pdf = PdfReader.Open(copy, PdfDocumentOpenMode.Import);
+        Assert.Equal(2, pdf.PageCount);
+    }
+
+    [Fact]
+    public async Task CombinedPreviewUsesTheSameVisibilityRulesAsPaperDetails()
+    {
+        await using var db = await SeedPaperAsync(PaperStatus.Pending, submittedByUserId: 10);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.PreviewPaper(1, CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
     public void Dispose()
     {
         try
@@ -132,14 +201,29 @@ public sealed class PaperPageTests : IDisposable
         }
     }
 
-    private async Task<ExamArchiveDbContext> SeedPaperAsync(PaperStatus status, int submittedByUserId)
+    private async Task<ExamArchiveDbContext> SeedPaperAsync(
+        PaperStatus status,
+        int submittedByUserId,
+        bool includeImage = false)
     {
         Directory.CreateDirectory(_uploads);
 
         var storedPath = "/uploads/2024/test-final-2024-06-abcd1234-001.pdf";
         var absolutePath = Path.Combine(_uploads, "2024", "test-final-2024-06-abcd1234-001.pdf");
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-        await File.WriteAllBytesAsync(absolutePath, "%PDF-1.4 test"u8.ToArray());
+        using (var document = new PdfDocument())
+        {
+            document.AddPage();
+            document.Save(absolutePath);
+        }
+
+        var imageStoredPath = "/uploads/2024/test-final-2024-06-abcd1234-002.png";
+        if (includeImage)
+        {
+            var imagePath = Path.Combine(_uploads, "2024", "test-final-2024-06-abcd1234-002.png");
+            using var image = new Image<Rgba32>(32, 48);
+            await image.SaveAsPngAsync(imagePath);
+        }
 
         var db = new ExamArchiveDbContext(
             new DbContextOptionsBuilder<ExamArchiveDbContext>()
@@ -169,6 +253,17 @@ public sealed class PaperPageTests : IDisposable
             PageNumber = 1,
             SizeBytes = 14
         });
+        if (includeImage)
+        {
+            db.PaperFiles.Add(new PaperFile
+            {
+                PaperId = 1,
+                StoredPath = imageStoredPath,
+                ContentType = "image/png",
+                PageNumber = 2,
+                SizeBytes = 100
+            });
+        }
         await db.SaveChangesAsync();
 
         return db;
@@ -185,12 +280,14 @@ public sealed class PaperPageTests : IDisposable
 
         var storage = new PaperFileStorage(new StubHostEnvironment(_uploads), configuration);
         var files = new PaperFileServer(db, storage, NullLogger<PaperFileServer>.Instance);
+        var pdfs = new PaperPdfServer(db, storage, NullLogger<PaperPdfServer>.Instance);
         var user = new User { Id = userId, Username = $"user-{userId}", Role = role };
 
         return new PapersController(
             db,
             storage,
             files,
+            pdfs,
             submissions: null!,
             NullLogger<PapersController>.Instance)
         {

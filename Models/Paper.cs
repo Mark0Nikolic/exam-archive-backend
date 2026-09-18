@@ -10,6 +10,8 @@ public class Paper
 
     public List<PaperFile> Files { get; set; } = [];
 
+    public List<PaperMetadataAudit> MetadataAudits { get; set; } = [];
+
     public ExamType ExamType { get; set; }
 
     public int Month { get; set; }

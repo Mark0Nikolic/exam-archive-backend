@@ -29,6 +29,7 @@ public class PapersController : ControllerBase
     private readonly ExamArchiveDbContext _db;
     private readonly PaperFileStorage _storage;
     private readonly PaperFileServer _files;
+    private readonly PaperPdfServer _pdfs;
     private readonly PaperSubmissionService _submissions;
     private readonly ILogger<PapersController> _logger;
 
@@ -36,12 +37,14 @@ public class PapersController : ControllerBase
         ExamArchiveDbContext db,
         PaperFileStorage storage,
         PaperFileServer files,
+        PaperPdfServer pdfs,
         PaperSubmissionService submissions,
         ILogger<PapersController> logger)
     {
         _db = db;
         _storage = storage;
         _files = files;
+        _pdfs = pdfs;
         _submissions = submissions;
         _logger = logger;
     }
@@ -413,6 +416,58 @@ public class PapersController : ControllerBase
             cancellationToken);
     }
 
+    [HttpGet("{id:int}/preview")]
+    [Produces("application/pdf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> PreviewPaper(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = User.GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        return await _pdfs.ServeAsync(
+            Response,
+            id,
+            includeUnapproved: User.IsStaff(),
+            ownedByUserId: userId.Value,
+            asAttachment: false,
+            cancellationToken);
+    }
+
+    [HttpGet("{id:int}/download")]
+    [Produces("application/pdf")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> DownloadPaper(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = User.GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        return await _pdfs.ServeAsync(
+            Response,
+            id,
+            includeUnapproved: User.IsStaff(),
+            ownedByUserId: userId.Value,
+            asAttachment: true,
+            cancellationToken);
+    }
+
     // Staff submissions are published at once; everyone else's wait in the queue. A
     // professor adding a paper is the same authority that would have approved it,
     // whereas an ordinary account proves somebody can be held to a submission, not
@@ -526,6 +581,7 @@ public class PapersController : ControllerBase
     // Staff rather than administrator: this is a judgement about one paper, which is
     // what a moderator is for. The subject catalogue it files against is the admin's.
     [HttpPut("{id:int}")]
+    [HttpPatch("{id:int}")]
     [Authorize(Policy = RolePolicies.Staff)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -557,10 +613,33 @@ public class PapersController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        paper.SubjectId = request.SubjectId;
-        paper.ExamType = request.ExamType;
-        paper.Month = request.Month;
-        paper.Year = request.Year;
+        var changed = paper.SubjectId != request.SubjectId
+            || paper.ExamType != request.ExamType
+            || paper.Month != request.Month
+            || paper.Year != request.Year;
+
+        if (changed)
+        {
+            _db.PaperMetadataAudits.Add(new PaperMetadataAudit
+            {
+                PaperId = paper.Id,
+                EditedByUserId = User.GetUserId(),
+                EditedAt = DateTime.UtcNow,
+                OldSubjectId = paper.SubjectId,
+                NewSubjectId = request.SubjectId,
+                OldExamType = paper.ExamType,
+                NewExamType = request.ExamType,
+                OldMonth = paper.Month,
+                NewMonth = request.Month,
+                OldYear = paper.Year,
+                NewYear = request.Year
+            });
+
+            paper.SubjectId = request.SubjectId;
+            paper.ExamType = request.ExamType;
+            paper.Month = request.Month;
+            paper.Year = request.Year;
+        }
 
         await _db.SaveChangesAsync(cancellationToken);
 

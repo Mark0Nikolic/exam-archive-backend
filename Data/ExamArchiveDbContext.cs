@@ -16,6 +16,7 @@ public class ExamArchiveDbContext : DbContext
     public DbSet<MajorSubject> MajorSubjects => Set<MajorSubject>();
     public DbSet<Paper> Papers => Set<Paper>();
     public DbSet<PaperFile> PaperFiles => Set<PaperFile>();
+    public DbSet<PaperMetadataAudit> PaperMetadataAudits => Set<PaperMetadataAudit>();
     public DbSet<User> Users => Set<User>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -233,6 +234,36 @@ public class ExamArchiveDbContext : DbContext
                     "CK_PaperFile_SizeBytes",
                     "`SizeBytes` >= 0");
             });
+        });
+
+        modelBuilder.Entity<PaperMetadataAudit>(entity =>
+        {
+            entity.Property(a => a.OldExamType)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(20);
+
+            entity.Property(a => a.NewExamType)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(20);
+
+            entity.Property(a => a.EditedAt)
+                .HasConversion(
+                    value => value,
+                    value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
+
+            entity.HasOne(a => a.Paper)
+                .WithMany(p => p.MetadataAudits)
+                .HasForeignKey(a => a.PaperId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(a => a.EditedByUser)
+                .WithMany()
+                .HasForeignKey(a => a.EditedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(a => new { a.PaperId, a.EditedAt });
         });
 
         modelBuilder.Entity<User>(entity =>

@@ -155,6 +155,40 @@ public sealed class PapersControllerTests
     }
 
     [Fact]
+    public async Task UpdatingPaperStoresTheOldAndNewMetadataInTheAuditTrail()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        db.Subjects.Add(new Subject { Id = 2, Code = "NEXT", NameSr = "Нови", NameEn = "New" });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, userId: 11, UserRole.Moderator);
+
+        var action = await controller.UpdatePaper(
+            1,
+            new UpdatePaperRequest
+            {
+                SubjectId = 2,
+                ExamType = ExamType.Midterm,
+                Month = 2,
+                Year = 2025
+            },
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(action.Result);
+        var audit = await db.PaperMetadataAudits.SingleAsync();
+        Assert.Equal(11, audit.EditedByUserId);
+        Assert.Equal(1, audit.OldSubjectId);
+        Assert.Equal(2, audit.NewSubjectId);
+        Assert.Equal(ExamType.Final, audit.OldExamType);
+        Assert.Equal(ExamType.Midterm, audit.NewExamType);
+        Assert.Equal(6, audit.OldMonth);
+        Assert.Equal(2, audit.NewMonth);
+        Assert.Equal(2024, audit.OldYear);
+        Assert.Equal(2025, audit.NewYear);
+        Assert.Equal(DateTimeKind.Utc, audit.EditedAt.Kind);
+    }
+
+    [Fact]
     public async Task YearOfStudyOutsideTheStudyLengthReturnsBadRequest()
     {
         await using var db = CreateDatabase();
@@ -330,6 +364,7 @@ public sealed class PapersControllerTests
             db,
             storage: null!,
             files: files,
+            pdfs: null!,
             submissions: null!,
             NullLogger<PapersController>.Instance)
         {

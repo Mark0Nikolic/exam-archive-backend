@@ -158,6 +158,16 @@ public sealed class PaperFileStorage
             : $"{stem}{extension}";
     }
 
+    public static string BuildPaperDownloadName(
+        string? subjectCode,
+        string subjectName,
+        ExamType examType,
+        int month,
+        int year) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{SubjectSlug(subjectCode, subjectName)}-{examType.ToString().ToLowerInvariant()}-{year}-{month:D2}.pdf");
+
     // nosniff is not optional here: these bytes came from a submitter and are served
     // inline, so without it a browser may decide the file looks like HTML and run it
     // as script from this origin.
