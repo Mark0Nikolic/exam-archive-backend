@@ -219,6 +219,8 @@ public class PapersController : ControllerBase
                 p.Status,
                 p.ReviewedAt,
                 p.RejectionReason,
+                p.ParseStatus,
+                p.PaperQuestions.Count,
                 p.SubmittedByUserId == currentUserId))
             .ToPagedResultAsync(paging, cancellationToken);
 
@@ -790,6 +792,9 @@ public class PapersController : ControllerBase
                 p.Status,
                 p.ReviewedAt,
                 p.RejectionReason,
+                p.ParseStatus,
+                QuestionCount = p.PaperQuestions.Count,
+                p.ParseError,
                 Files = p.Files
                     .OrderBy(f => f.PageNumber)
                     .Select(f => new { f.PageNumber, f.ContentType, f.SizeBytes })
@@ -815,6 +820,9 @@ public class PapersController : ControllerBase
             paper.Status,
             paper.ReviewedAt,
             paper.RejectionReason,
+            paper.ParseStatus,
+            paper.QuestionCount,
+            paper.ParseError,
             new PaperFilesDto(paper.Files.Select(f => new PaperFileDto(
                 f.PageNumber,
                 f.ContentType,

@@ -15,4 +15,6 @@ public record PaperDto(
     PaperStatus Status,
     DateTime? ReviewedAt,
     string? RejectionReason,
+    PaperParseStatus ParseStatus,
+    int QuestionCount,
     bool IsOwnedByCurrentUser);

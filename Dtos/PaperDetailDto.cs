@@ -15,6 +15,9 @@ public record PaperDetailDto(
     PaperStatus Status,
     DateTime? ReviewedAt,
     string? RejectionReason,
+    PaperParseStatus ParseStatus,
+    int QuestionCount,
+    string? ParseError,
     PaperFilesDto Files);
 
 // A paper's pages grouped by format, keyed by the format's extension without the dot.

@@ -10,6 +10,8 @@ public record UploadedPaperDto(
     int Year,
     DateTime UploadedAt,
     PaperStatus Status,
+    PaperParseStatus ParseStatus,
+    int QuestionCount,
     IReadOnlyList<PaperFileDto> Files)
 {
     public static UploadedPaperDto From(Paper paper) => new(
@@ -20,6 +22,8 @@ public record UploadedPaperDto(
         paper.Year,
         paper.UploadedAt,
         paper.Status,
+        paper.ParseStatus,
+        paper.PaperQuestions.Count,
         [.. paper.Files
             .OrderBy(f => f.PageNumber)
             .Select(f => new PaperFileDto(
