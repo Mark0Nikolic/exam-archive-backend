@@ -20,4 +20,6 @@ public class Subject
     public ICollection<MajorSubject> MajorSubjects { get; set; } = new List<MajorSubject>();
 
     public ICollection<Paper> Papers { get; set; } = new List<Paper>();
+
+    public ICollection<Question> Questions { get; set; } = new List<Question>();
 }

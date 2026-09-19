@@ -78,8 +78,25 @@ public sealed class PaperPdfServer
             return new NotFoundResult();
         }
 
+        var composableFiles = paper.Files
+            .Where(file => PaperFileTypes.CanComposeToCombinedPdf(file.ContentType))
+            .ToList();
+
+        if (composableFiles.Count == 0)
+        {
+            return new ObjectResult(new ProblemDetails
+            {
+                Title = "Paper preview unavailable",
+                Detail = "This paper has no PDF or image pages to combine. Word pages can be downloaded individually.",
+                Status = StatusCodes.Status409Conflict
+            })
+            {
+                StatusCode = StatusCodes.Status409Conflict
+            };
+        }
+
         var resolvedFiles = new List<ResolvedPaperFile>();
-        foreach (var file in paper.Files)
+        foreach (var file in composableFiles)
         {
             if (!_storage.TryResolve(file.StoredPath, out var absolutePath)
                 || !File.Exists(absolutePath))

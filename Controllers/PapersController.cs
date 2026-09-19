@@ -31,6 +31,7 @@ public class PapersController : ControllerBase
     private readonly PaperFileServer _files;
     private readonly PaperPdfServer _pdfs;
     private readonly PaperSubmissionService _submissions;
+    private readonly IPaperParseQueue _parseQueue;
     private readonly ILogger<PapersController> _logger;
 
     public PapersController(
@@ -39,6 +40,7 @@ public class PapersController : ControllerBase
         PaperFileServer files,
         PaperPdfServer pdfs,
         PaperSubmissionService submissions,
+        IPaperParseQueue parseQueue,
         ILogger<PapersController> logger)
     {
         _db = db;
@@ -46,6 +48,7 @@ public class PapersController : ControllerBase
         _files = files;
         _pdfs = pdfs;
         _submissions = submissions;
+        _parseQueue = parseQueue;
         _logger = logger;
     }
 
@@ -384,11 +387,50 @@ public class PapersController : ControllerBase
             : NotFound();
     }
 
+    // Inspection only: the question bank for later exam simulation is not exposed
+    // here. Staff can confirm a parse; students cannot.
+    [HttpGet("{id:int}/questions")]
+    [Authorize(Policy = RolePolicies.Staff)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PaperQuestionsDto>> GetPaperQuestions(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var paper = await _db.Papers
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => new
+            {
+                p.Id,
+                p.ParseStatus,
+                p.ParseError,
+                Questions = p.PaperQuestions
+                    .OrderBy(q => q.Ordinal)
+                    .Select(q => new PaperQuestionDto(q.Ordinal, q.Label, q.Question!.Text))
+                    .ToList()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (paper is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(new PaperQuestionsDto(
+            paper.Id,
+            paper.ParseStatus,
+            paper.ParseError,
+            paper.Questions));
+    }
+
     // Preview is the default (Content-Disposition: inline). ?download=true is the
     // Save As path. Visibility is the same as GetPaper, so a submitter who can open
     // the JSON can also open the pages.
     [HttpGet("{id:int}/pages/{pageNumber:int}")]
-    [Produces("application/pdf", "image/jpeg", "image/png", "image/webp")]
+    [Produces("application/pdf", "image/jpeg", "image/png", "image/webp",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -540,7 +582,19 @@ public class PapersController : ControllerBase
             paper.ReviewedAt = DateTime.UtcNow;
             paper.RejectionReason = null;
 
+            var shouldParse = paper.ParseStatus != PaperParseStatus.Parsed;
+            if (shouldParse)
+            {
+                paper.ParseStatus = PaperParseStatus.Queued;
+                paper.ParseError = null;
+            }
+
             await _db.SaveChangesAsync(cancellationToken);
+
+            if (shouldParse)
+            {
+                _parseQueue.Enqueue(paper.Id);
+            }
         }
 
         return Ok(await LoadAsync(
@@ -676,6 +730,16 @@ public class PapersController : ControllerBase
 
         _db.Papers.Remove(paper);
         await _db.SaveChangesAsync(cancellationToken);
+
+        var orphans = await _db.Questions
+            .Where(q => !q.PaperQuestions.Any())
+            .ToListAsync(cancellationToken);
+
+        if (orphans.Count > 0)
+        {
+            _db.Questions.RemoveRange(orphans);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         // Files after the commit, deliberately. Deleting them first and then failing
         // to save would leave rows pointing at nothing; this order can at worst leave

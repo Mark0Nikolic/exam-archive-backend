@@ -44,6 +44,11 @@ builder.Services.AddSingleton<PaperPdfComposer>();
 builder.Services.AddSingleton<IPaperPdfCache, PaperPdfCache>();
 builder.Services.AddScoped<PaperPdfServer>();
 builder.Services.AddSingleton<ImageSanitizer>();
+builder.Services.AddSingleton<IPaperParseQueue, PaperParseQueue>();
+builder.Services.AddSingleton<QuestionSplitter>();
+builder.Services.AddSingleton<PaperTextExtractor>();
+builder.Services.AddScoped<PaperParseService>();
+builder.Services.AddHostedService<PaperParseWorker>();
 builder.Services.AddScoped<PaperSubmissionService>();
 builder.Services.AddScoped<UserAccountService>();
 
@@ -100,12 +105,27 @@ builder.Services.AddAuthorization(options => options.AddRolePolicies());
 if (hasCrossSiteFrontend)
 {
     builder.Services.AddCors(options =>
-        options.AddDefaultPolicy(policy => policy
-            .WithOrigins(allowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials()
-            .WithExposedHeaders("Content-Disposition")));
+        options.AddDefaultPolicy(policy =>
+        {
+            // Vite hops to 5174/5175 when 5173 is already taken. An exact origin
+            // list would silently fail CORS again on the next free port.
+            if (builder.Environment.IsDevelopment())
+            {
+                policy.SetIsOriginAllowed(origin =>
+                    allowedOrigins.Contains(origin, StringComparer.Ordinal)
+                    || IsLocalFrontendOrigin(origin));
+            }
+            else
+            {
+                policy.WithOrigins(allowedOrigins);
+            }
+
+            policy
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials()
+                .WithExposedHeaders("Content-Disposition");
+        }));
 }
 
 builder.Services.AddControllers()
@@ -160,3 +180,11 @@ app.UsePasswordChangeGate();
 app.MapControllers();
 
 app.Run();
+
+static bool IsLocalFrontendOrigin(string origin)
+{
+    return Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+        && uri.Scheme is "http" or "https"
+        && uri.Host is "localhost" or "127.0.0.1";
+}
+

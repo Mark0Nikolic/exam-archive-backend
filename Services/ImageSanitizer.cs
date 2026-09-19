@@ -28,9 +28,8 @@ public sealed class ImageSanitizer
         _logger = logger;
     }
 
-    // PDFs carry their own metadata in a different structure and pass through
-    // untouched.
-    public static bool CanSanitize(PaperFileType type) => type != PaperFileTypes.Pdf;
+    // Documents carry metadata in a different structure and pass through untouched.
+    public static bool CanSanitize(PaperFileType type) => PaperFileTypes.IsImage(type);
 
     // Returns the image with all metadata removed, or null if it could not be read
     // or is too large to decode safely. Buffered in memory because the caller needs

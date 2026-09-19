@@ -177,6 +177,42 @@ public sealed class PaperPageTests : IDisposable
     }
 
     [Fact]
+    public async Task WordOnlyPaperReturnsConflictForCombinedPreview()
+    {
+        await using var db = await SeedPaperAsync(
+            PaperStatus.Approved,
+            submittedByUserId: 10,
+            omitPdf: true,
+            includeWord: true);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.PreviewPaper(1, CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task CombinedPreviewSkipsWordPages()
+    {
+        await using var db = await SeedPaperAsync(
+            PaperStatus.Approved,
+            submittedByUserId: 10,
+            includeWord: true);
+        var controller = CreateController(db, userId: 99, UserRole.User);
+
+        var result = await controller.PreviewPaper(1, CancellationToken.None);
+
+        var file = Assert.IsType<PhysicalFileResult>(result);
+        await using var stream = File.OpenRead(file.FileName);
+        using var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+        copy.Position = 0;
+        using var pdf = PdfReader.Open(copy, PdfDocumentOpenMode.Import);
+        Assert.Single(pdf.Pages);
+    }
+
+    [Fact]
     public async Task CombinedPreviewUsesTheSameVisibilityRulesAsPaperDetails()
     {
         await using var db = await SeedPaperAsync(PaperStatus.Pending, submittedByUserId: 10);
@@ -245,17 +281,22 @@ public sealed class PaperPageTests : IDisposable
     private async Task<ExamArchiveDbContext> SeedPaperAsync(
         PaperStatus status,
         int submittedByUserId,
-        bool includeImage = false)
+        bool includeImage = false,
+        bool includeWord = false,
+        bool omitPdf = false)
     {
         Directory.CreateDirectory(_uploads);
 
         var storedPath = "/uploads/2024/test-final-2024-06-abcd1234-001.pdf";
         var absolutePath = Path.Combine(_uploads, "2024", "test-final-2024-06-abcd1234-001.pdf");
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-        using (var document = new PdfDocument())
+        if (!omitPdf)
         {
-            document.AddPage();
-            document.Save(absolutePath);
+            using (var document = new PdfDocument())
+            {
+                document.AddPage();
+                document.Save(absolutePath);
+            }
         }
 
         var imageStoredPath = "/uploads/2024/test-final-2024-06-abcd1234-002.png";
@@ -264,6 +305,13 @@ public sealed class PaperPageTests : IDisposable
             var imagePath = Path.Combine(_uploads, "2024", "test-final-2024-06-abcd1234-002.png");
             using var image = new Image<Rgba32>(32, 48);
             await image.SaveAsPngAsync(imagePath);
+        }
+
+        var wordStoredPath = "/uploads/2024/test-final-2024-06-abcd1234-003.docx";
+        if (includeWord)
+        {
+            var wordPath = Path.Combine(_uploads, "2024", "test-final-2024-06-abcd1234-003.docx");
+            await File.WriteAllBytesAsync(wordPath, SampleDocx.Render(["1. A question"]));
         }
 
         var db = new ExamArchiveDbContext(
@@ -286,14 +334,17 @@ public sealed class PaperPageTests : IDisposable
             UploadedAt = DateTime.UtcNow,
             ReviewedAt = status == PaperStatus.Pending ? null : DateTime.UtcNow
         });
-        db.PaperFiles.Add(new PaperFile
+        if (!omitPdf)
         {
-            PaperId = 1,
-            StoredPath = storedPath,
-            ContentType = "application/pdf",
-            PageNumber = 1,
-            SizeBytes = 14
-        });
+            db.PaperFiles.Add(new PaperFile
+            {
+                PaperId = 1,
+                StoredPath = storedPath,
+                ContentType = "application/pdf",
+                PageNumber = 1,
+                SizeBytes = 14
+            });
+        }
         if (includeImage)
         {
             db.PaperFiles.Add(new PaperFile
@@ -301,7 +352,18 @@ public sealed class PaperPageTests : IDisposable
                 PaperId = 1,
                 StoredPath = imageStoredPath,
                 ContentType = "image/png",
-                PageNumber = 2,
+                PageNumber = omitPdf ? 1 : 2,
+                SizeBytes = 100
+            });
+        }
+        if (includeWord)
+        {
+            db.PaperFiles.Add(new PaperFile
+            {
+                PaperId = 1,
+                StoredPath = wordStoredPath,
+                ContentType = PaperFileTypes.Docx.ContentType,
+                PageNumber = (omitPdf ? 0 : 1) + (includeImage ? 1 : 0) + 1,
                 SizeBytes = 100
             });
         }
@@ -338,6 +400,7 @@ public sealed class PaperPageTests : IDisposable
             files,
             pdfs,
             submissions: null!,
+            parseQueue: new PaperParseQueue(),
             NullLogger<PapersController>.Instance)
         {
             ControllerContext = new ControllerContext

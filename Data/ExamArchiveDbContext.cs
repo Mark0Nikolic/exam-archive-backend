@@ -17,6 +17,8 @@ public class ExamArchiveDbContext : DbContext
     public DbSet<Paper> Papers => Set<Paper>();
     public DbSet<PaperFile> PaperFiles => Set<PaperFile>();
     public DbSet<PaperMetadataAudit> PaperMetadataAudits => Set<PaperMetadataAudit>();
+    public DbSet<Question> Questions => Set<Question>();
+    public DbSet<PaperQuestion> PaperQuestions => Set<PaperQuestion>();
     public DbSet<User> Users => Set<User>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -144,6 +146,22 @@ public class ExamArchiveDbContext : DbContext
             entity.Property(p => p.RejectionReason)
                 .HasMaxLength(500);
 
+            entity.Property(p => p.ParseStatus)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(20)
+                .HasDefaultValue(PaperParseStatus.NotQueued);
+
+            entity.Property(p => p.ParsedAt)
+                .HasConversion(
+                    value => value,
+                    value => value.HasValue
+                        ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+                        : value);
+
+            entity.Property(p => p.ParseError)
+                .HasMaxLength(80);
+
             // Restrict: a subject cannot be deleted while it still has papers.
             entity.HasOne(p => p.Subject)
                 .WithMany(s => s.Papers)
@@ -187,6 +205,14 @@ public class ExamArchiveDbContext : DbContext
                 t.HasCheckConstraint(
                     "CK_Paper_ReviewedAt",
                     "`Status` <> 'Pending' OR `ReviewedAt` IS NULL");
+
+                t.HasCheckConstraint(
+                    "CK_Paper_ParseStatus",
+                    "`ParseStatus` IN ('NotQueued', 'Queued', 'Parsed', 'Skipped', 'Failed')");
+
+                t.HasCheckConstraint(
+                    "CK_Paper_ParseError",
+                    "`ParseStatus` IN ('Skipped', 'Failed') OR `ParseError` IS NULL");
             });
         });
 
@@ -264,6 +290,61 @@ public class ExamArchiveDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
 
             entity.HasIndex(a => new { a.PaperId, a.EditedAt });
+        });
+
+        modelBuilder.Entity<Question>(entity =>
+        {
+            entity.Property(q => q.Text)
+                .IsRequired()
+                .HasColumnType("longtext");
+
+            entity.Property(q => q.ContentHash)
+                .IsRequired()
+                .HasMaxLength(64);
+
+            entity.Property(q => q.CreatedAt)
+                .HasDefaultValueSql("(UTC_TIMESTAMP())")
+                .HasConversion(
+                    value => value,
+                    value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
+
+            entity.HasOne(q => q.Subject)
+                .WithMany(s => s.Questions)
+                .HasForeignKey(q => q.SubjectId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(q => new { q.SubjectId, q.ContentHash })
+                .IsUnique();
+        });
+
+        modelBuilder.Entity<PaperQuestion>(entity =>
+        {
+            entity.Property(pq => pq.Label)
+                .IsRequired()
+                .HasMaxLength(50);
+
+            entity.HasOne(pq => pq.Paper)
+                .WithMany(p => p.PaperQuestions)
+                .HasForeignKey(pq => pq.PaperId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(pq => pq.Question)
+                .WithMany(q => q.PaperQuestions)
+                .HasForeignKey(pq => pq.QuestionId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(pq => new { pq.PaperId, pq.QuestionId })
+                .IsUnique();
+
+            entity.HasIndex(pq => new { pq.PaperId, pq.Ordinal })
+                .IsUnique();
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint(
+                    "CK_PaperQuestion_Ordinal",
+                    "`Ordinal` >= 1");
+            });
         });
 
         modelBuilder.Entity<User>(entity =>

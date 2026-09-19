@@ -1,3 +1,5 @@
+using System.IO.Compression;
+
 namespace ExamArchive.Models;
 
 // A file format the archive accepts, with the byte signature that proves an upload
@@ -76,12 +78,35 @@ public static class PaperFileTypes
         Signature = [(0, "RIFF"u8.ToArray()), (8, "WEBP"u8.ToArray())]
     };
 
-    public static readonly PaperFileType[] All = [Pdf, Jpeg, Png, Webp];
+    public static readonly PaperFileType Docx = new()
+    {
+        ContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Extension = ".docx",
+        AcceptedExtensions = [".docx"],
+
+        // A .docx is a ZIP. The header only proves that; ContainsWordDocument
+        // confirms the archive actually holds a Word document part.
+        Signature = [(0, "PK"u8.ToArray())]
+    };
+
+    public static readonly PaperFileType[] All = [Pdf, Jpeg, Png, Webp, Docx];
 
     public static readonly int MaxSignatureLength = All.Max(t => t.SignatureLength);
 
     public static readonly string[] AcceptedExtensions =
         [.. All.SelectMany(t => t.AcceptedExtensions).Order(StringComparer.Ordinal)];
+
+    public static bool IsImage(PaperFileType type) =>
+        type == Jpeg || type == Png || type == Webp;
+
+    public static bool IsDocument(PaperFileType type) =>
+        type == Pdf || type == Docx;
+
+    public static bool CanComposeToCombinedPdf(string contentType)
+    {
+        var type = FromContentType(contentType);
+        return type is not null && type != Docx;
+    }
 
     // The claim still has to be confirmed against the bytes — see PaperFileType.Matches.
     public static PaperFileType? FromExtension(string? fileName)
@@ -100,4 +125,38 @@ public static class PaperFileTypes
     public static PaperFileType? FromContentType(string contentType) =>
         All.FirstOrDefault(
             t => t.ContentType.Equals(contentType, StringComparison.OrdinalIgnoreCase));
+
+    // PK is every ZIP, so this is the second half of .docx validation: the package
+    // must contain the Word document part. Random zips and other Office files fail.
+    public static bool ContainsWordDocument(Stream stream)
+    {
+        Stream readable = stream;
+        MemoryStream? copy = null;
+
+        try
+        {
+            if (!stream.CanSeek)
+            {
+                copy = new MemoryStream();
+                stream.CopyTo(copy);
+                copy.Position = 0;
+                readable = copy;
+            }
+            else if (stream.Position != 0)
+            {
+                stream.Position = 0;
+            }
+
+            using var archive = new ZipArchive(readable, ZipArchiveMode.Read, leaveOpen: true);
+            return archive.GetEntry("word/document.xml") is not null;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+        finally
+        {
+            copy?.Dispose();
+        }
+    }
 }

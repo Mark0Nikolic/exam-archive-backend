@@ -42,26 +42,30 @@ public sealed class PaperSubmissionService
 
     public const long MaxTotalUploadBytes = 100 * 1024 * 1024;
 
-    // A sub-limit within UploadPaperRequest.MaxFiles, which counts pages. A PDF is
-    // already a whole document, so more than one means the paper arrived split.
-    public const int MaxPdfFiles = 2;
+    // A sub-limit within UploadPaperRequest.MaxFiles, which counts pages. A PDF or
+    // Word file is already a whole document, so more than one means the paper
+    // arrived split.
+    public const int MaxDocumentFiles = 2;
 
     private const int MinYear = 1990;
 
     private readonly ExamArchiveDbContext _db;
     private readonly PaperFileStorage _storage;
     private readonly ImageSanitizer _sanitizer;
+    private readonly IPaperParseQueue _parseQueue;
     private readonly ILogger<PaperSubmissionService> _logger;
 
     public PaperSubmissionService(
         ExamArchiveDbContext db,
         PaperFileStorage storage,
         ImageSanitizer sanitizer,
+        IPaperParseQueue parseQueue,
         ILogger<PaperSubmissionService> logger)
     {
         _db = db;
         _storage = storage;
         _sanitizer = sanitizer;
+        _parseQueue = parseQueue;
         _logger = logger;
     }
 
@@ -124,7 +128,10 @@ public sealed class PaperSubmissionService
             SubmittedByUserId = submittedByUserId,
 
             // A staff upload skips the queue, so the decision is made here and now.
-            ReviewedAt = initialStatus == PaperStatus.Pending ? null : DateTime.UtcNow
+            ReviewedAt = initialStatus == PaperStatus.Pending ? null : DateTime.UtcNow,
+            ParseStatus = initialStatus == PaperStatus.Approved
+                ? PaperParseStatus.Queued
+                : PaperParseStatus.NotQueued
         };
 
         try
@@ -143,7 +150,7 @@ public sealed class PaperSubmissionService
                     submissionId, pageNumber, type.Extension);
 
                 // Images are cleaned of camera metadata before anything touches the
-                // disk. A PDF has no EXIF block and passes through as uploaded.
+                // disk. Documents have no EXIF block and pass through as uploaded.
                 MemoryStream? sanitized = null;
 
                 if (ImageSanitizer.CanSanitize(type))
@@ -184,6 +191,11 @@ public sealed class PaperSubmissionService
         {
             _storage.TryDeleteOrphans(written, _logger);
             throw;
+        }
+
+        if (paper.ParseStatus == PaperParseStatus.Queued)
+        {
+            _parseQueue.Enqueue(paper.Id);
         }
 
         return PaperSubmissionResult.Success(paper);
@@ -251,6 +263,19 @@ public sealed class PaperSubmissionService
                 continue;
             }
 
+            if (type == PaperFileTypes.Docx)
+            {
+                await using var documentStream = file.OpenReadStream();
+                if (!PaperFileTypes.ContainsWordDocument(documentStream))
+                {
+                    errors.Add(new PaperSubmissionError(
+                        label,
+                        $"Page {page} is not a valid DOCX file."));
+                    valid = false;
+                    continue;
+                }
+            }
+
             resolved[i] = type;
         }
 
@@ -267,14 +292,14 @@ public sealed class PaperSubmissionService
         // Formats may otherwise be mixed freely.
         if (valid)
         {
-            var pdfCount = resolved.Count(t => t == PaperFileTypes.Pdf);
+            var documentCount = resolved.Count(PaperFileTypes.IsDocument);
 
-            if (pdfCount > MaxPdfFiles)
+            if (documentCount > MaxDocumentFiles)
             {
                 errors.Add(new PaperSubmissionError(
                     nameof(UploadPaperRequest.Files),
-                    $"A submission may contain at most {MaxPdfFiles} PDFs, "
-                        + $"and this one has {pdfCount}."));
+                    $"A submission may contain at most {MaxDocumentFiles} PDF or Word documents, "
+                        + $"and this one has {documentCount}."));
                 valid = false;
             }
         }

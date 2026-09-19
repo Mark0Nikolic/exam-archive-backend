@@ -189,6 +189,90 @@ public sealed class PapersControllerTests
     }
 
     [Fact]
+    public async Task ApprovingAPendingPaperEnqueuesParsing()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Pending, 10, 2024, 6, Utc(2024, 1, 1)));
+        var queue = new RecordingPaperParseQueue();
+        var controller = CreateController(db, userId: 11, UserRole.Moderator, parseQueue: queue);
+
+        var action = await controller.ApprovePaper(1, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(action.Result);
+        var paper = await db.Papers.SingleAsync();
+        Assert.Equal(PaperStatus.Approved, paper.Status);
+        Assert.Equal(PaperParseStatus.Queued, paper.ParseStatus);
+        Assert.Equal([1], queue.Enqueued);
+    }
+
+    [Fact]
+    public async Task ApprovingAnAlreadyApprovedPaperDoesNotEnqueueParsing()
+    {
+        await using var db = CreateDatabase();
+        var existing = Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1));
+        existing.ParseStatus = PaperParseStatus.Parsed;
+        await SeedAsync(db, existing);
+        var queue = new RecordingPaperParseQueue();
+        var controller = CreateController(db, userId: 11, UserRole.Moderator, parseQueue: queue);
+
+        var action = await controller.ApprovePaper(1, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(action.Result);
+        Assert.Empty(queue.Enqueued);
+        Assert.Equal(PaperParseStatus.Parsed, (await db.Papers.SingleAsync()).ParseStatus);
+    }
+
+    [Fact]
+    public async Task RejectingAPaperDoesNotEnqueueParsing()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Pending, 10, 2024, 6, Utc(2024, 1, 1)));
+        var queue = new RecordingPaperParseQueue();
+        var controller = CreateController(db, userId: 11, UserRole.Moderator, parseQueue: queue);
+
+        var action = await controller.RejectPaper(
+            1,
+            new RejectPaperRequest { Reason = "Unreadable scan." },
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(action.Result);
+        Assert.Empty(queue.Enqueued);
+        Assert.Equal(PaperParseStatus.NotQueued, (await db.Papers.SingleAsync()).ParseStatus);
+    }
+
+    [Fact]
+    public async Task StaffCanReadParsedQuestions()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        db.Questions.Add(new Question
+        {
+            Id = 1,
+            SubjectId = 1,
+            Text = "What is a primary key?",
+            ContentHash = QuestionText.Hash("What is a primary key?"),
+            CreatedAt = DateTime.UtcNow
+        });
+        db.PaperQuestions.Add(new PaperQuestion
+        {
+            PaperId = 1,
+            QuestionId = 1,
+            Ordinal = 1,
+            Label = "1"
+        });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .GetPaperQuestions(1, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
+        var question = Assert.Single(body.Questions);
+        Assert.Equal("1", question.Label);
+        Assert.Equal("What is a primary key?", question.Text);
+    }
+
+    [Fact]
     public async Task YearOfStudyOutsideTheStudyLengthReturnsBadRequest()
     {
         await using var db = CreateDatabase();
@@ -283,6 +367,10 @@ public sealed class PapersControllerTests
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPapers"));
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPaper"));
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPage"));
+        Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPaperQuestions"));
+
+        var questionsPolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "GetPaperQuestions");
+        Assert.Contains(questionsPolicy, attribute => attribute.Policy == RolePolicies.Staff);
 
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Login"));
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Register"));
@@ -357,7 +445,8 @@ public sealed class PapersControllerTests
         ExamArchiveDbContext db,
         int userId,
         UserRole role,
-        PaperFileServer files = null!)
+        PaperFileServer files = null!,
+        IPaperParseQueue? parseQueue = null)
     {
         var user = new User { Id = userId, Username = $"user-{userId}", Role = role };
         var controller = new PapersController(
@@ -366,6 +455,7 @@ public sealed class PapersControllerTests
             files: files,
             pdfs: null!,
             submissions: null!,
+            parseQueue: parseQueue ?? new PaperParseQueue(),
             NullLogger<PapersController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -460,5 +550,19 @@ public sealed class PapersControllerTests
         db.Papers.AddRange(papers);
         await db.SaveChangesAsync();
         return db;
+    }
+
+    private sealed class RecordingPaperParseQueue : IPaperParseQueue
+    {
+        public List<int> Enqueued { get; } = [];
+
+        public void Enqueue(int paperId) => Enqueued.Add(paperId);
+
+        public async IAsyncEnumerable<int> ReadAllAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 }

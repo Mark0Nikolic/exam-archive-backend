@@ -34,6 +34,11 @@ public sealed class PaperPdfComposer
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                if (file.ContentType == PaperFileTypes.Docx.ContentType)
+                {
+                    continue;
+                }
+
                 if (file.ContentType == PaperFileTypes.Pdf.ContentType)
                 {
                     var imported = PdfReader.Open(file.AbsolutePath, PdfDocumentOpenMode.Import);

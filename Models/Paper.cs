@@ -12,6 +12,8 @@ public class Paper
 
     public List<PaperMetadataAudit> MetadataAudits { get; set; } = [];
 
+    public List<PaperQuestion> PaperQuestions { get; set; } = [];
+
     public ExamType ExamType { get; set; }
 
     public int Month { get; set; }
@@ -35,4 +37,11 @@ public class Paper
     // Cleared when a rejected paper is later approved, so it can never contradict
     // the status.
     public string? RejectionReason { get; set; }
+
+    public PaperParseStatus ParseStatus { get; set; } = PaperParseStatus.NotQueued;
+
+    public DateTime? ParsedAt { get; set; }
+
+    // Set when parsing is skipped or fails; cleared when queued or parsed.
+    public string? ParseError { get; set; }
 }
