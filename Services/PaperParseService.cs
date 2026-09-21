@@ -15,17 +15,20 @@ public sealed class PaperParseService
     private readonly ExamArchiveDbContext _db;
     private readonly PaperTextExtractor _extractor;
     private readonly QuestionSplitter _splitter;
+    private readonly PaperQuestionService _questions;
     private readonly ILogger<PaperParseService> _logger;
 
     public PaperParseService(
         ExamArchiveDbContext db,
         PaperTextExtractor extractor,
         QuestionSplitter splitter,
+        PaperQuestionService questions,
         ILogger<PaperParseService> logger)
     {
         _db = db;
         _extractor = extractor;
         _splitter = splitter;
+        _questions = questions;
         _logger = logger;
     }
 
@@ -155,6 +158,11 @@ public sealed class PaperParseService
         paper.ParseError = parseError;
         paper.ParsedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
+
+        if (status == PaperParseStatus.Parsed)
+        {
+            await _questions.RemoveUnusedAsync(cancellationToken);
+        }
     }
 
     private static string TruncateLabel(string label) =>

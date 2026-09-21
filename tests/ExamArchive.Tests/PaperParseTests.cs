@@ -93,6 +93,36 @@ public sealed class PaperParseTests : IDisposable
         Assert.Contains(result.Errors, error => error.Message.Contains("DOCX"));
     }
 
+    [Theory]
+    [InlineData("scan.png")]
+    [InlineData("scan.jpg")]
+    [InlineData("scan.jpeg")]
+    [InlineData("scan.webp")]
+    public async Task ImageUploadsAreRejected(string fileName)
+    {
+        var (service, _, db) = CreateSubmission();
+        db.Subjects.Add(new Subject { Id = 1, Code = "IT240", NameSr = "Базе" });
+        await db.SaveChangesAsync();
+
+        var result = await service.SubmitAsync(
+            new UploadPaperRequest
+            {
+                SubjectId = 1,
+                ExamType = ExamType.Final,
+                Month = 6,
+                Year = 2024,
+                Files = [FormFile(fileName, "application/octet-stream", [1, 2, 3, 4])]
+            },
+            PaperStatus.Pending,
+            submittedByUserId: 10,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Errors,
+            error => error.Message.Contains("must be one of: .docx, .pdf."));
+    }
+
     [Fact]
     public async Task ValidDocxIsAccepted()
     {
@@ -308,6 +338,54 @@ public sealed class PaperParseTests : IDisposable
         Assert.Equal(2, await db.Questions.CountAsync());
     }
 
+    [Fact]
+    public async Task ReparseReplacesPreviousQuestionsAndDropsOrphans()
+    {
+        await using var db = CreateDatabase();
+        var parser = CreateParser(db);
+        var paper = await SeedPaperAsync(
+            db,
+            1,
+            1,
+            "exam.pdf",
+            PaperFileTypes.Pdf.ContentType,
+            SamplePdf.Render(
+            [
+                "1. What is a primary key?",
+                "2. Define a foreign key."
+            ]));
+
+        await parser.ParseAsync(paper.Id, CancellationToken.None);
+        db.Questions.Add(new Question
+        {
+            SubjectId = 1,
+            Text = "Leftover from a bad split",
+            ContentHash = QuestionText.Hash("Leftover from a bad split"),
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var leftover = await db.Questions.SingleAsync(q => q.Text.StartsWith("Leftover"));
+        db.PaperQuestions.Add(new PaperQuestion
+        {
+            PaperId = paper.Id,
+            QuestionId = leftover.Id,
+            Ordinal = 3,
+            Label = "3"
+        });
+        paper.ParseStatus = PaperParseStatus.Queued;
+        await db.SaveChangesAsync();
+
+        await parser.ParseAsync(paper.Id, CancellationToken.None);
+
+        var stored = await db.Papers.SingleAsync();
+        Assert.Equal(PaperParseStatus.Parsed, stored.ParseStatus);
+        Assert.Equal(2, await db.PaperQuestions.CountAsync());
+        Assert.Equal(2, await db.Questions.CountAsync());
+        Assert.DoesNotContain(
+            await db.Questions.Select(q => q.Text).ToListAsync(),
+            text => text.StartsWith("Leftover"));
+    }
+
     public void Dispose()
     {
         try
@@ -360,6 +438,7 @@ public sealed class PaperParseTests : IDisposable
             db,
             new PaperTextExtractor(storage, NullLogger<PaperTextExtractor>.Instance),
             new QuestionSplitter(),
+            new PaperQuestionService(db, NullLogger<PaperQuestionService>.Instance),
             NullLogger<PaperParseService>.Instance);
     }
 

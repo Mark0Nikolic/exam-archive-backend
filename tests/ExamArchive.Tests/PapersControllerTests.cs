@@ -268,8 +268,219 @@ public sealed class PapersControllerTests
         var ok = Assert.IsType<OkObjectResult>(action.Result);
         var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
         var question = Assert.Single(body.Questions);
+        Assert.Equal(1, question.QuestionId);
         Assert.Equal("1", question.Label);
         Assert.Equal("What is a primary key?", question.Text);
+        Assert.False(question.AppearedRecently);
+        var sitting = Assert.Single(question.Appearances);
+        Assert.Equal(1, sitting.PaperId);
+        Assert.Equal(2024, sitting.Year);
+        Assert.Equal(6, sitting.Month);
+    }
+
+    [Fact]
+    public async Task PaperQuestionsIncludeAppearancesAndARecentSignature()
+    {
+        await using var db = CreateDatabase();
+        var now = DateTime.UtcNow;
+        var first = now.AddMonths(-2);
+        var second = now.AddMonths(-1);
+        await SeedAsync(
+            db,
+            Paper(1, PaperStatus.Approved, 10, first.Year, first.Month, Utc(first.Year, first.Month, 1)),
+            Paper(2, PaperStatus.Approved, 10, second.Year, second.Month, Utc(second.Year, second.Month, 1)));
+        db.Questions.Add(new Question
+        {
+            Id = 1,
+            SubjectId = 1,
+            Text = "What is a primary key?",
+            ContentHash = QuestionText.Hash("What is a primary key?"),
+            CreatedAt = DateTime.UtcNow
+        });
+        db.PaperQuestions.AddRange(
+            new PaperQuestion { PaperId = 1, QuestionId = 1, Ordinal = 1, Label = "1" },
+            new PaperQuestion { PaperId = 2, QuestionId = 1, Ordinal = 1, Label = "Zadatak 1" });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 10, UserRole.User)
+            .GetPaperQuestions(1, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
+        var question = Assert.Single(body.Questions);
+        Assert.True(question.AppearedRecently);
+        Assert.Equal(2, question.Appearances.Count);
+        Assert.Contains(question.Appearances, sitting => sitting.PaperId == 2 && sitting.Label == "Zadatak 1");
+    }
+
+    [Fact]
+    public async Task AnotherUserCannotReadQuestionsOnAPendingPaper()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Pending, 10, 2024, 6, Utc(2024, 1, 1)));
+
+        var action = await CreateController(db, userId: 99, UserRole.User)
+            .GetPaperQuestions(1, CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task StaffCanEditAQuestionWithoutRewritingOtherPapers()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(
+            db,
+            Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)),
+            Paper(2, PaperStatus.Approved, 10, 2024, 9, Utc(2024, 1, 2)));
+        db.Questions.Add(new Question
+        {
+            Id = 1,
+            SubjectId = 1,
+            Text = "What is a primary key?",
+            ContentHash = QuestionText.Hash("What is a primary key?"),
+            CreatedAt = DateTime.UtcNow
+        });
+        db.PaperQuestions.AddRange(
+            new PaperQuestion { PaperId = 1, QuestionId = 1, Ordinal = 1, Label = "1" },
+            new PaperQuestion { PaperId = 2, QuestionId = 1, Ordinal = 1, Label = "1" });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .UpdatePaperQuestion(
+                1,
+                1,
+                new UpdatePaperQuestionRequest { Text = "What is a foreign key?" },
+                CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
+        Assert.Equal("What is a foreign key?", Assert.Single(body.Questions).Text);
+        Assert.Equal(2, await db.Questions.CountAsync());
+        Assert.Equal(
+            "What is a primary key?",
+            (await db.PaperQuestions.Include(q => q.Question)
+                .SingleAsync(q => q.PaperId == 2)).Question!.Text);
+    }
+
+    [Fact]
+    public async Task StaffCanDeleteAQuestionAndCompactOrdinals()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        db.Questions.AddRange(
+            new Question
+            {
+                Id = 1,
+                SubjectId = 1,
+                Text = "One",
+                ContentHash = QuestionText.Hash("One"),
+                CreatedAt = DateTime.UtcNow
+            },
+            new Question
+            {
+                Id = 2,
+                SubjectId = 1,
+                Text = "Two",
+                ContentHash = QuestionText.Hash("Two"),
+                CreatedAt = DateTime.UtcNow
+            });
+        db.PaperQuestions.AddRange(
+            new PaperQuestion { PaperId = 1, QuestionId = 1, Ordinal = 1, Label = "1" },
+            new PaperQuestion { PaperId = 1, QuestionId = 2, Ordinal = 2, Label = "2" });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .DeletePaperQuestion(1, 1, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
+        var remaining = Assert.Single(body.Questions);
+        Assert.Equal(1, remaining.Ordinal);
+        Assert.Equal("Two", remaining.Text);
+        Assert.Equal(1, await db.Questions.CountAsync());
+    }
+
+    [Fact]
+    public async Task StaffCanMergeABadSplit()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        db.Questions.AddRange(
+            new Question
+            {
+                Id = 1,
+                SubjectId = 1,
+                Text = "What is SQL?",
+                ContentHash = QuestionText.Hash("What is SQL?"),
+                CreatedAt = DateTime.UtcNow
+            },
+            new Question
+            {
+                Id = 2,
+                SubjectId = 1,
+                Text = "Give an example.",
+                ContentHash = QuestionText.Hash("Give an example."),
+                CreatedAt = DateTime.UtcNow
+            },
+            new Question
+            {
+                Id = 3,
+                SubjectId = 1,
+                Text = "Define a join.",
+                ContentHash = QuestionText.Hash("Define a join."),
+                CreatedAt = DateTime.UtcNow
+            });
+        db.PaperQuestions.AddRange(
+            new PaperQuestion { PaperId = 1, QuestionId = 1, Ordinal = 1, Label = "1" },
+            new PaperQuestion { PaperId = 1, QuestionId = 2, Ordinal = 2, Label = "2" },
+            new PaperQuestion { PaperId = 1, QuestionId = 3, Ordinal = 3, Label = "3" });
+        await db.SaveChangesAsync();
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .MergePaperQuestions(
+                1,
+                new MergePaperQuestionsRequest { Ordinals = [1, 2] },
+                CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var body = Assert.IsType<PaperQuestionsDto>(ok.Value);
+        Assert.Equal(2, body.Questions.Count);
+        Assert.Equal("What is SQL?\n\nGive an example.", body.Questions[0].Text);
+        Assert.Equal("Define a join.", body.Questions[1].Text);
+        Assert.Equal([1, 2], body.Questions.Select(q => q.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task ReparsingAnApprovedPaperEnqueuesParsing()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Approved, 10, 2024, 6, Utc(2024, 1, 1)));
+        var stored = await db.Papers.SingleAsync();
+        stored.ParseStatus = PaperParseStatus.Parsed;
+        await db.SaveChangesAsync();
+        var queue = new RecordingPaperParseQueue();
+        var controller = CreateController(db, userId: 11, UserRole.Moderator, parseQueue: queue);
+
+        var action = await controller.ReparsePaper(1, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(action.Result);
+        Assert.Equal(PaperParseStatus.Queued, (await db.Papers.SingleAsync()).ParseStatus);
+        Assert.Equal([1], queue.Enqueued);
+    }
+
+    [Fact]
+    public async Task ReparsingARejectedPaperReturnsConflict()
+    {
+        await using var db = CreateDatabase();
+        await SeedAsync(db, Paper(1, PaperStatus.Rejected, 10, 2024, 6, Utc(2024, 1, 1)));
+
+        var action = await CreateController(db, userId: 11, UserRole.Moderator)
+            .ReparsePaper(1, CancellationToken.None);
+
+        var conflict = Assert.IsType<ObjectResult>(action.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
     }
 
     [Fact]
@@ -370,7 +581,22 @@ public sealed class PapersControllerTests
         Assert.Empty(Attributes<AllowAnonymousAttribute>(typeof(PapersController), "GetPaperQuestions"));
 
         var questionsPolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "GetPaperQuestions");
-        Assert.Contains(questionsPolicy, attribute => attribute.Policy == RolePolicies.Staff);
+        Assert.DoesNotContain(questionsPolicy, attribute => attribute.Policy == RolePolicies.Staff);
+
+        var deletePolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "DeletePaper");
+        Assert.Contains(deletePolicy, attribute => attribute.Policy == RolePolicies.Staff);
+
+        var updateQuestionPolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "UpdatePaperQuestion");
+        Assert.Contains(updateQuestionPolicy, attribute => attribute.Policy == RolePolicies.Staff);
+
+        var deleteQuestionPolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "DeletePaperQuestion");
+        Assert.Contains(deleteQuestionPolicy, attribute => attribute.Policy == RolePolicies.Staff);
+
+        var mergePolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "MergePaperQuestions");
+        Assert.Contains(mergePolicy, attribute => attribute.Policy == RolePolicies.Staff);
+
+        var reparsePolicy = Attributes<AuthorizeAttribute>(typeof(PapersController), "ReparsePaper");
+        Assert.Contains(reparsePolicy, attribute => attribute.Policy == RolePolicies.Staff);
 
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Login"));
         Assert.NotEmpty(Attributes<AllowAnonymousAttribute>(typeof(AuthController), "Register"));
@@ -455,6 +681,7 @@ public sealed class PapersControllerTests
             files: files,
             pdfs: null!,
             submissions: null!,
+            questions: new PaperQuestionService(db, NullLogger<PaperQuestionService>.Instance),
             parseQueue: parseQueue ?? new PaperParseQueue(),
             NullLogger<PapersController>.Instance)
         {

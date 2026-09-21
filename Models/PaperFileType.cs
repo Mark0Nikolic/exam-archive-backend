@@ -37,9 +37,9 @@ public sealed class PaperFileType
     }
 }
 
-// The single source of truth for accepted formats: upload validation, the content
-// type sent on download, and the CK_PaperFile_ContentType check constraint. Adding
-// a format means updating that constraint in a migration too.
+// Known formats: download, preview composition, and CK_PaperFile_ContentType.
+// Uploads are a narrower list — see AcceptedForUpload. Adding a stored format
+// still means updating that constraint in a migration.
 public static class PaperFileTypes
 {
     public static readonly PaperFileType Pdf = new()
@@ -91,10 +91,14 @@ public static class PaperFileTypes
 
     public static readonly PaperFileType[] All = [Pdf, Jpeg, Png, Webp, Docx];
 
+    // Photos stay in All so existing pages still serve and compose. New uploads
+    // are documents only until image intake is turned back on.
+    public static readonly PaperFileType[] AcceptedForUpload = [Pdf, Docx];
+
     public static readonly int MaxSignatureLength = All.Max(t => t.SignatureLength);
 
     public static readonly string[] AcceptedExtensions =
-        [.. All.SelectMany(t => t.AcceptedExtensions).Order(StringComparer.Ordinal)];
+        [.. AcceptedForUpload.SelectMany(t => t.AcceptedExtensions).Order(StringComparer.Ordinal)];
 
     public static bool IsImage(PaperFileType type) =>
         type == Jpeg || type == Png || type == Webp;
@@ -118,7 +122,7 @@ public static class PaperFileTypes
             return null;
         }
 
-        return All.FirstOrDefault(
+        return AcceptedForUpload.FirstOrDefault(
             t => t.AcceptedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
     }
 

@@ -253,7 +253,7 @@ public sealed class PaperPageTests : IDisposable
     public async Task DeletingPaperRemovesItsCachedPdf()
     {
         await using var db = await SeedPaperAsync(PaperStatus.Approved, submittedByUserId: 10);
-        var controller = CreateController(db, userId: 11, UserRole.Admin);
+        var controller = CreateController(db, userId: 11, UserRole.Moderator);
         var preview = Assert.IsType<PhysicalFileResult>(
             await controller.PreviewPaper(1, CancellationToken.None));
         var cacheDirectory = Path.GetDirectoryName(preview.FileName)!;
@@ -400,6 +400,7 @@ public sealed class PaperPageTests : IDisposable
             files,
             pdfs,
             submissions: null!,
+            questions: new PaperQuestionService(db, NullLogger<PaperQuestionService>.Instance),
             parseQueue: new PaperParseQueue(),
             NullLogger<PapersController>.Instance)
         {

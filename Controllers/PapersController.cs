@@ -31,6 +31,7 @@ public class PapersController : ControllerBase
     private readonly PaperFileServer _files;
     private readonly PaperPdfServer _pdfs;
     private readonly PaperSubmissionService _submissions;
+    private readonly PaperQuestionService _questions;
     private readonly IPaperParseQueue _parseQueue;
     private readonly ILogger<PapersController> _logger;
 
@@ -40,6 +41,7 @@ public class PapersController : ControllerBase
         PaperFileServer files,
         PaperPdfServer pdfs,
         PaperSubmissionService submissions,
+        PaperQuestionService questions,
         IPaperParseQueue parseQueue,
         ILogger<PapersController> logger)
     {
@@ -48,6 +50,7 @@ public class PapersController : ControllerBase
         _files = files;
         _pdfs = pdfs;
         _submissions = submissions;
+        _questions = questions;
         _parseQueue = parseQueue;
         _logger = logger;
     }
@@ -374,57 +377,133 @@ public class PapersController : ControllerBase
             return Ok(paper);
         }
 
-        // The visibility query deliberately returned no row. Check existence only
-        // now, on the exceptional path, so successful detail requests stay one
-        // database round trip.
-        var exists = await _db.Papers
-            .AsNoTracking()
-            .AnyAsync(p => p.Id == id, cancellationToken);
-
-        return exists
-            ? Problem(
-                title: "Paper access denied",
-                detail: "You may open approved papers and your own submissions only.",
-                statusCode: StatusCodes.Status403Forbidden)
-            : NotFound();
+        return await DenyOrNotFoundAsync(id, cancellationToken);
     }
 
-    // Inspection only: the question bank for later exam simulation is not exposed
-    // here. Staff can confirm a parse; students cannot.
+    // Anyone who can open the paper can read its questions. Appearances on other
+    // sittings are the "this came up recently" signature — staff repair is separate.
     [HttpGet("{id:int}/questions")]
-    [Authorize(Policy = RolePolicies.Staff)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PaperQuestionsDto>> GetPaperQuestions(
         int id,
         CancellationToken cancellationToken)
     {
-        var paper = await _db.Papers
-            .AsNoTracking()
-            .Where(p => p.Id == id)
-            .Select(p => new
-            {
-                p.Id,
-                p.ParseStatus,
-                p.ParseError,
-                Questions = p.PaperQuestions
-                    .OrderBy(q => q.Ordinal)
-                    .Select(q => new PaperQuestionDto(q.Ordinal, q.Label, q.Question!.Text))
-                    .ToList()
-            })
-            .FirstOrDefaultAsync(cancellationToken);
+        var userId = User.GetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var body = await _questions.GetVisibleAsync(
+            id,
+            includeUnapproved: User.IsStaff(),
+            ownedByUserId: userId.Value,
+            DateTime.UtcNow,
+            cancellationToken);
+
+        if (body is not null)
+        {
+            return Ok(body);
+        }
+
+        return await DenyOrNotFoundAsync(id, cancellationToken);
+    }
+
+    [HttpPut("{id:int}/questions/{ordinal:int}")]
+    [HttpPatch("{id:int}/questions/{ordinal:int}")]
+    [Authorize(Policy = RolePolicies.Staff)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<PaperQuestionsDto>> UpdatePaperQuestion(
+        int id,
+        [Range(1, int.MaxValue, ErrorMessage = "Ordinal must be at least 1.")]
+        int ordinal,
+        [FromBody] UpdatePaperQuestionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var written = await _questions.UpdateOccurrenceAsync(
+            id, ordinal, request.Label, request.Text, cancellationToken);
+
+        return await WriteQuestionsAsync(id, written, cancellationToken);
+    }
+
+    [HttpDelete("{id:int}/questions/{ordinal:int}")]
+    [Authorize(Policy = RolePolicies.Staff)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PaperQuestionsDto>> DeletePaperQuestion(
+        int id,
+        [Range(1, int.MaxValue, ErrorMessage = "Ordinal must be at least 1.")]
+        int ordinal,
+        CancellationToken cancellationToken)
+    {
+        var written = await _questions.DeleteOccurrenceAsync(id, ordinal, cancellationToken);
+
+        return await WriteQuestionsAsync(id, written, cancellationToken);
+    }
+
+    [HttpPost("{id:int}/questions/merge")]
+    [Authorize(Policy = RolePolicies.Staff)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<PaperQuestionsDto>> MergePaperQuestions(
+        int id,
+        [FromBody] MergePaperQuestionsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var written = await _questions.MergeOccurrencesAsync(
+            id, request.Ordinals, cancellationToken);
+
+        return await WriteQuestionsAsync(id, written, cancellationToken);
+    }
+
+    // Queues a parsed paper again so a bad split can be replaced from the file.
+    // Distinct from editing one occurrence: this throws away this paper's current
+    // question list and runs the splitter over the stored bytes.
+    [HttpPost("{id:int}/reparse")]
+    [Authorize(Policy = RolePolicies.Staff)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<PaperDetailDto>> ReparsePaper(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var paper = await _db.Papers.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
         if (paper is null)
         {
             return NotFound();
         }
 
-        return Ok(new PaperQuestionsDto(
-            paper.Id,
-            paper.ParseStatus,
-            paper.ParseError,
-            paper.Questions));
+        if (paper.Status != PaperStatus.Approved)
+        {
+            return Problem(
+                title: "Paper is not approved",
+                detail: "Only an approved paper is parsed. Approve it first.",
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
+        paper.ParseStatus = PaperParseStatus.Queued;
+        paper.ParseError = null;
+        await _db.SaveChangesAsync(cancellationToken);
+        _parseQueue.Enqueue(paper.Id);
+
+        _logger.LogInformation("{Staff} queued a reparse of paper {PaperId}.", User.Identity?.Name, id);
+
+        return Ok(await LoadAsync(
+            id, includeUnapproved: true, ownedByUserId: null, cancellationToken));
     }
 
     // Preview is the default (Content-Disposition: inline). ?download=true is the
@@ -706,10 +785,10 @@ public class PapersController : ControllerBase
     }
 
     // Distinct from rejection, which stays reversible. This is for papers that should
-    // not exist at all, and it is not reversible — which is why it is the one action
-    // here restricted to an administrator.
+    // not exist at all, and it is not reversible. Staff rather than administrator:
+    // a moderator who published the wrong paper is who needs to take it down.
     [HttpDelete("{id:int}")]
-    [Authorize(Policy = RolePolicies.Administrators)]
+    [Authorize(Policy = RolePolicies.Staff)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -750,7 +829,7 @@ public class PapersController : ControllerBase
         _pdfs.TryDeleteCache(id);
 
         _logger.LogInformation(
-            "{Admin} deleted paper {PaperId} and its {FileCount} file(s).",
+            "{Staff} deleted paper {PaperId} and its {FileCount} file(s).",
             User.Identity?.Name,
             id,
             storedPaths.Count);
@@ -765,6 +844,51 @@ public class PapersController : ControllerBase
     // The pages are projected in the same query as the paper: a separate round trip
     // per paper would be the classic N+1 in disguise. Grouping happens after the
     // query, being only a rearrangement of rows already fetched.
+    private async Task<ActionResult> DenyOrNotFoundAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        // Existence is checked only on the exceptional path so a successful read
+        // stays one round trip.
+        var exists = await _db.Papers
+            .AsNoTracking()
+            .AnyAsync(p => p.Id == id, cancellationToken);
+
+        return exists
+            ? Problem(
+                title: "Paper access denied",
+                detail: "You may open approved papers and your own submissions only.",
+                statusCode: StatusCodes.Status403Forbidden)
+            : NotFound();
+    }
+
+    private async Task<ActionResult<PaperQuestionsDto>> WriteQuestionsAsync(
+        int paperId,
+        QuestionWriteResult written,
+        CancellationToken cancellationToken)
+    {
+        switch (written.Status)
+        {
+            case QuestionWriteStatus.NotFound:
+                return NotFound();
+            case QuestionWriteStatus.Conflict:
+                return Problem(
+                    title: "Question already on this paper",
+                    detail: written.Message,
+                    statusCode: StatusCodes.Status409Conflict);
+            case QuestionWriteStatus.Invalid:
+                ModelState.AddModelError(written.Field ?? string.Empty, written.Message ?? string.Empty);
+                return ValidationProblem(ModelState);
+            default:
+                return Ok(await _questions.GetVisibleAsync(
+                    paperId,
+                    includeUnapproved: true,
+                    ownedByUserId: null,
+                    DateTime.UtcNow,
+                    cancellationToken));
+        }
+    }
+
     private async Task<PaperDetailDto?> LoadAsync(
         int id,
         bool includeUnapproved,
